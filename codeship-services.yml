@@ -1,0 +1,17 @@
+test:
+  build:
+    image: tester
+    dockerfile: Dockerfile
+  cached: true
+  depends_on:
+    - dynamo
+  environment:
+    AWS_ENDPOINT: dynamo:8000
+    AWS_DEFAULT_REGION: us-east-1
+    AWS_ACCESS_KEY_ID: abc123
+    AWS_SECRET_ACCESS_KEY: abc123
+  working_dir: /certmagic-storage-dynamodb
+  command: make test
+
+dynamo:
+  image: amazon/dynamodb-local
