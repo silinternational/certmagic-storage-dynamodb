@@ -29,10 +29,10 @@ For more information about authentication see https://docs.aws.amazon.com/sdk-fo
 import (
     "github.com/caddyserver/certmagic"
 
-    github.com/silinternational/certmagic-storage-dynamodb
+    "github.com/silinternational/certmagic-storage-dynamodb"
 )
 // ...
-certmagic.Default.Storage = &certmagic_storage_dynamodb.DynamoDBStorage{
+certmagic.Default.Storage = &dynamodbstore.DynamoDBStorage{
     Table: "CertMagic",
 }
 ```

@@ -1,4 +1,4 @@
-package certmagic_storage_dynamodb
+package dynamodbstorage
 
 import (
 	"os"
@@ -16,7 +16,7 @@ const TestTableName = "CertMagic"
 const DisableSSL = true
 
 func initDb() error {
-	storage := DynamoDBStorage{
+	storage := Storage{
 		Table:         TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
@@ -122,13 +122,13 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 		name     string
 		fields   fields
 		wantErr  bool
-		expected *DynamoDBStorage
+		expected *Storage
 	}{
 		{
 			name:     "defaults - should error with empty table",
 			fields:   fields{},
 			wantErr:  true,
-			expected: &DynamoDBStorage{},
+			expected: &Storage{},
 		},
 		{
 			name: "defaults - provide only table name",
@@ -136,7 +136,7 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 				Table: "Testing123",
 			},
 			wantErr: false,
-			expected: &DynamoDBStorage{
+			expected: &Storage{
 				Table:      "Testing123",
 				AwsSession: defaultAwsSession,
 			},
@@ -144,7 +144,7 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &DynamoDBStorage{
+			s := &Storage{
 				Table:         tt.fields.Table,
 				AwsSession:    tt.fields.AwsSession,
 				AwsEndpoint:   tt.fields.AwsEndpoint,
@@ -208,7 +208,7 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &DynamoDBStorage{
+			s := &Storage{
 				Table:         tt.fields.Table,
 				AwsSession:    tt.fields.AwsSession,
 				AwsEndpoint:   tt.fields.AwsEndpoint,
@@ -236,7 +236,7 @@ func TestDynamoDBStorage_List(t *testing.T) {
 		return
 	}
 
-	storage := DynamoDBStorage{
+	storage := Storage{
 		Table:         TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
@@ -301,7 +301,7 @@ func TestDynamoDBStorage_Stat(t *testing.T) {
 		return
 	}
 
-	storage := DynamoDBStorage{
+	storage := Storage{
 		Table:         TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
@@ -341,7 +341,7 @@ func TestDynamoDBStorage_Delete(t *testing.T) {
 		return
 	}
 
-	storage := DynamoDBStorage{
+	storage := Storage{
 		Table:         TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),

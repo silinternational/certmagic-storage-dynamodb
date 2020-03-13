@@ -1,4 +1,4 @@
-package certmagic_storage_dynamodb
+package dynamodbstorage
 
 import (
 	"fmt"
@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	CertDataAttribute    = "CertData"
-	DomainAttribute      = "Domain"
-	LastUpdatedAttribute = "LastUpdated"
+	certDataAttribute    = "CertData"
+	domainAttribute      = "Domain"
+	lastUpdatedAttribute = "LastUpdated"
 )
 
 // DomainItem holds structure of domain, certificate data,
@@ -27,11 +27,11 @@ type DomainItem struct {
 	LastUpdated time.Time `json:"LastUpdated"`
 }
 
-// DynamoDBStorage implements certmagic.Storage to facilitate
+// Storage implements certmagic.Storage to facilitate
 // storage of certificates in DynamoDB for a clustered environment.
 // Also implements certmagic.Locker to facilitate locking
 // and unlocking of cert data during storage
-type DynamoDBStorage struct {
+type Storage struct {
 	Table         string
 	AwsSession    *session.Session
 	AwsEndpoint   string
@@ -40,7 +40,7 @@ type DynamoDBStorage struct {
 }
 
 // initConfig initializes configuration for table nam and AWS session
-func (s *DynamoDBStorage) initConfig() error {
+func (s *Storage) initConfig() error {
 	if s.Table == "" {
 		return fmt.Errorf("config error: table name is required")
 	}
@@ -62,7 +62,7 @@ func (s *DynamoDBStorage) initConfig() error {
 }
 
 // Store puts value at key.
-func (s *DynamoDBStorage) Store(key string, value []byte) error {
+func (s *Storage) Store(key string, value []byte) error {
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -74,13 +74,13 @@ func (s *DynamoDBStorage) Store(key string, value []byte) error {
 	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.PutItemInput{
 		Item: map[string]*dynamodb.AttributeValue{
-			DomainAttribute: {
+			domainAttribute: {
 				S: aws.String(key),
 			},
-			CertDataAttribute: {
+			certDataAttribute: {
 				S: aws.String(string(value)),
 			},
-			LastUpdatedAttribute: {
+			lastUpdatedAttribute: {
 				S: aws.String(time.Now().Format(time.RFC3339)),
 			},
 		},
@@ -96,7 +96,7 @@ func (s *DynamoDBStorage) Store(key string, value []byte) error {
 }
 
 // Load retrieves the value at key.
-func (s *DynamoDBStorage) Load(key string) ([]byte, error) {
+func (s *Storage) Load(key string) ([]byte, error) {
 	if err := s.initConfig(); err != nil {
 		return []byte{}, err
 	}
@@ -114,7 +114,7 @@ func (s *DynamoDBStorage) Load(key string) ([]byte, error) {
 }
 
 // Delete deletes key.
-func (s *DynamoDBStorage) Delete(key string) error {
+func (s *Storage) Delete(key string) error {
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func (s *DynamoDBStorage) Delete(key string) error {
 	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.DeleteItemInput{
 		Key: map[string]*dynamodb.AttributeValue{
-			DomainAttribute: {
+			domainAttribute: {
 				S: aws.String(key),
 			},
 		},
@@ -143,7 +143,7 @@ func (s *DynamoDBStorage) Delete(key string) error {
 
 // Exists returns true if the key exists
 // and there was no error checking.
-func (s *DynamoDBStorage) Exists(key string) bool {
+func (s *Storage) Exists(key string) bool {
 	cert, err := s.Load(key)
 	if string(cert) != "" && err == nil {
 		return true
@@ -157,7 +157,7 @@ func (s *DynamoDBStorage) Exists(key string) bool {
 // will be enumerated (i.e. "directories"
 // should be walked); otherwise, only keys
 // prefixed exactly by prefix will be listed.
-func (s *DynamoDBStorage) List(prefix string, recursive bool) ([]string, error) {
+func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 	if err := s.initConfig(); err != nil {
 		return []string{}, err
 	}
@@ -169,7 +169,7 @@ func (s *DynamoDBStorage) List(prefix string, recursive bool) ([]string, error) 
 	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.ScanInput{
 		ExpressionAttributeNames: map[string]*string{
-			"#D": aws.String(DomainAttribute),
+			"#D": aws.String(domainAttribute),
 		},
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":p": {
@@ -209,7 +209,7 @@ func (s *DynamoDBStorage) List(prefix string, recursive bool) ([]string, error) 
 }
 
 // Stat returns information about key.
-func (s *DynamoDBStorage) Stat(key string) (certmagic.KeyInfo, error) {
+func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 	domainItem, err := s.getDomainItem(key)
 	if err != nil {
 		return certmagic.KeyInfo{}, err
@@ -240,7 +240,7 @@ func (s *DynamoDBStorage) Stat(key string) (certmagic.KeyInfo, error) {
 // is relevant) should put a reasonable expiration on the lock in
 // case Unlock is unable to be called due to some sort of network
 // failure or system crash.
-func (s *DynamoDBStorage) Lock(key string) error {
+func (s *Storage) Lock(key string) error {
 	return nil
 }
 
@@ -248,15 +248,15 @@ func (s *DynamoDBStorage) Lock(key string) error {
 // called after a successful call to Lock, and only after the
 // critical section is finished, even if it errored or timed
 // out. Unlock cleans up any resources allocated during Lock.
-func (s *DynamoDBStorage) Unlock(key string) error {
+func (s *Storage) Unlock(key string) error {
 	return nil
 }
 
-func (s *DynamoDBStorage) getDomainItem(key string) (DomainItem, error) {
+func (s *Storage) getDomainItem(key string) (DomainItem, error) {
 	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.GetItemInput{
 		Key: map[string]*dynamodb.AttributeValue{
-			DomainAttribute: {
+			domainAttribute: {
 				S: aws.String(key),
 			},
 		},
