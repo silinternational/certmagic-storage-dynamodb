@@ -19,20 +19,6 @@ build:
           - go-scrutinizer-run
           - govet-run
           - golint-run
-    coverage:
-      services:
-        dynamo:
-          image: amazon/dynamodb-local
-          ports:
-            - 8000
-          ramdisks:
-            - /data
-      tests:
-        override:
-          - command: make
-            coverage:
-              file: 'cover.out'
-              format: 'go-cc'
   root_path: './'
 filter:
   excluded_paths:
