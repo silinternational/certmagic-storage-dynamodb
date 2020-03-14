@@ -1,6 +1,7 @@
 package dynamodbstorage
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"time"
@@ -14,16 +15,18 @@ import (
 )
 
 const (
-	certDataAttribute    = "CertData"
-	domainAttribute      = "Domain"
+	contentsAttribute    = "Contents"
+	primaryKeyAttribute  = "PrimaryKey"
 	lastUpdatedAttribute = "LastUpdated"
+	lockTimeoutMinutes   = 5 * time.Minute
+	lockPollingInterval  = 5 * time.Second
 )
 
-// DomainItem holds structure of domain, certificate data,
+// Item holds structure of domain, certificate data,
 // and last updated for marshaling with DynamoDb
-type DomainItem struct {
-	Domain      string    `json:"Domain"`
-	CertData    string    `json:"CertData"`
+type Item struct {
+	PrimaryKey  string    `json:"PrimaryKey"`
+	Contents    string    `json:"Contents"`
 	LastUpdated time.Time `json:"LastUpdated"`
 }
 
@@ -32,17 +35,26 @@ type DomainItem struct {
 // Also implements certmagic.Locker to facilitate locking
 // and unlocking of cert data during storage
 type Storage struct {
-	Table         string
-	AwsSession    *session.Session
-	AwsEndpoint   string
-	AwsRegion     string
-	AwsDisableSSL bool
+	Table               string
+	AwsSession          *session.Session
+	AwsEndpoint         string
+	AwsRegion           string
+	AwsDisableSSL       bool
+	LockTimeout         time.Duration
+	LockPollingInterval time.Duration
 }
 
 // initConfig initializes configuration for table nam and AWS session
 func (s *Storage) initConfig() error {
 	if s.Table == "" {
 		return fmt.Errorf("config error: table name is required")
+	}
+
+	if s.LockTimeout == 0*time.Second {
+		s.LockTimeout = lockTimeoutMinutes
+	}
+	if s.LockPollingInterval == 0*time.Second {
+		s.LockPollingInterval = lockPollingInterval
 	}
 
 	// Initialize AWS Session if needed
@@ -67,6 +79,8 @@ func (s *Storage) Store(key string, value []byte) error {
 		return err
 	}
 
+	encVal := base64.StdEncoding.EncodeToString(value)
+
 	if key == "" {
 		return fmt.Errorf("key must not be empty")
 	}
@@ -74,11 +88,11 @@ func (s *Storage) Store(key string, value []byte) error {
 	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.PutItemInput{
 		Item: map[string]*dynamodb.AttributeValue{
-			domainAttribute: {
+			primaryKeyAttribute: {
 				S: aws.String(key),
 			},
-			certDataAttribute: {
-				S: aws.String(string(value)),
+			contentsAttribute: {
+				S: aws.String(encVal),
 			},
 			lastUpdatedAttribute: {
 				S: aws.String(time.Now().Format(time.RFC3339)),
@@ -105,12 +119,12 @@ func (s *Storage) Load(key string) ([]byte, error) {
 		return []byte{}, fmt.Errorf("key must not be empty")
 	}
 
-	domainItem, err := s.getDomainItem(key)
+	domainItem, err := s.getItem(key)
 	if err != nil {
-		return []byte{}, err
+		return nil, err
 	}
 
-	return []byte(domainItem.CertData), nil
+	return []byte(domainItem.Contents), nil
 }
 
 // Delete deletes key.
@@ -126,7 +140,7 @@ func (s *Storage) Delete(key string) error {
 	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.DeleteItemInput{
 		Key: map[string]*dynamodb.AttributeValue{
-			domainAttribute: {
+			primaryKeyAttribute: {
 				S: aws.String(key),
 			},
 		},
@@ -144,6 +158,7 @@ func (s *Storage) Delete(key string) error {
 // Exists returns true if the key exists
 // and there was no error checking.
 func (s *Storage) Exists(key string) bool {
+
 	cert, err := s.Load(key)
 	if string(cert) != "" && err == nil {
 		return true
@@ -169,7 +184,7 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.ScanInput{
 		ExpressionAttributeNames: map[string]*string{
-			"#D": aws.String(domainAttribute),
+			"#D": aws.String(primaryKeyAttribute),
 		},
 		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
 			":p": {
@@ -187,7 +202,7 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 		func(page *dynamodb.ScanOutput, lastPage bool) bool {
 			pageNum++
 
-			var items []DomainItem
+			var items []Item
 			err := dynamodbattribute.UnmarshalListOfMaps(page.Items, &items)
 			if err != nil {
 				log.Printf("error unmarshaling page of items: %s", err.Error())
@@ -195,7 +210,7 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 			}
 
 			for _, i := range items {
-				matchingKeys = append(matchingKeys, i.Domain)
+				matchingKeys = append(matchingKeys, i.PrimaryKey)
 			}
 
 			return !lastPage
@@ -210,7 +225,8 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 
 // Stat returns information about key.
 func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
-	domainItem, err := s.getDomainItem(key)
+
+	domainItem, err := s.getItem(key)
 	if err != nil {
 		return certmagic.KeyInfo{}, err
 	}
@@ -218,7 +234,7 @@ func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 	return certmagic.KeyInfo{
 		Key:        key,
 		Modified:   domainItem.LastUpdated,
-		Size:       int64(len(domainItem.CertData)),
+		Size:       int64(len(domainItem.Contents)),
 		IsTerminal: true,
 	}, nil
 }
@@ -241,7 +257,39 @@ func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 // case Unlock is unable to be called due to some sort of network
 // failure or system crash.
 func (s *Storage) Lock(key string) error {
-	return nil
+	if err := s.initConfig(); err != nil {
+		return err
+	}
+
+	lockKey := fmt.Sprintf("LOCK-%s", key)
+
+	// Check for existing lock
+	existing, err := s.getItem(lockKey)
+	_, isErrNotExists := err.(certmagic.ErrNotExist)
+	if err != nil && !isErrNotExists {
+		return err
+	}
+
+	// Lock exists, check if expired or sleep 5 seconds and check again
+	if existing.Contents != "" {
+		expires, err := time.Parse(time.RFC3339, existing.Contents)
+		if err != nil {
+			return err
+		}
+		if time.Now().After(expires) {
+			if err := s.Unlock(key); err != nil {
+				return err
+			}
+			return s.Lock(key)
+		}
+
+		time.Sleep(s.LockPollingInterval)
+		return s.Lock(key)
+	}
+
+	// lock doesn't exist, create it
+	contents := []byte(time.Now().Add(s.LockTimeout).Format(time.RFC3339))
+	return s.Store(lockKey, contents)
 }
 
 // Unlock releases the lock for key. This method must ONLY be
@@ -249,14 +297,20 @@ func (s *Storage) Lock(key string) error {
 // critical section is finished, even if it errored or timed
 // out. Unlock cleans up any resources allocated during Lock.
 func (s *Storage) Unlock(key string) error {
-	return nil
+	if err := s.initConfig(); err != nil {
+		return err
+	}
+
+	lockKey := fmt.Sprintf("LOCK-%s", key)
+
+	return s.Delete(lockKey)
 }
 
-func (s *Storage) getDomainItem(key string) (DomainItem, error) {
+func (s *Storage) getItem(key string) (Item, error) {
 	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.GetItemInput{
 		Key: map[string]*dynamodb.AttributeValue{
-			domainAttribute: {
+			primaryKeyAttribute: {
 				S: aws.String(key),
 			},
 		},
@@ -266,14 +320,23 @@ func (s *Storage) getDomainItem(key string) (DomainItem, error) {
 
 	result, err := svc.GetItem(input)
 	if err != nil {
-		return DomainItem{}, err
+		return Item{}, err
 	}
 
-	var domainItem DomainItem
+	var domainItem Item
 	err = dynamodbattribute.UnmarshalMap(result.Item, &domainItem)
 	if err != nil {
-		return DomainItem{}, err
+		return Item{}, err
 	}
+	if domainItem.Contents == "" {
+		return Item{}, certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
+	}
+
+	dec, err := base64.StdEncoding.DecodeString(domainItem.Contents)
+	if err != nil {
+		return Item{}, err
+	}
+	domainItem.Contents = string(dec)
 
 	return domainItem, nil
 }

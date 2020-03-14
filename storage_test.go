@@ -10,9 +10,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/caddyserver/certmagic"
 )
 
-const TestTableName = "CertMagic"
+const TestTableName = "CertMagicTest"
 const DisableSSL = true
 
 func initDb() error {
@@ -61,13 +62,13 @@ func initDb() error {
 	createTable := &dynamodb.CreateTableInput{
 		AttributeDefinitions: []*dynamodb.AttributeDefinition{
 			{
-				AttributeName: aws.String("Domain"),
+				AttributeName: aws.String("PrimaryKey"),
 				AttributeType: aws.String("S"),
 			},
 		},
 		KeySchema: []*dynamodb.KeySchemaElement{
 			{
-				AttributeName: aws.String("Domain"),
+				AttributeName: aws.String("PrimaryKey"),
 				KeyType:       aws.String("HASH"),
 			},
 		},
@@ -137,8 +138,9 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 			},
 			wantErr: false,
 			expected: &Storage{
-				Table:      "Testing123",
-				AwsSession: defaultAwsSession,
+				Table:       "Testing123",
+				AwsSession:  defaultAwsSession,
+				LockTimeout: lockTimeoutMinutes,
 			},
 		},
 	}
@@ -376,4 +378,64 @@ func TestDynamoDBStorage_Delete(t *testing.T) {
 		return
 	}
 
+}
+
+func TestDynamoDBStorage_Lock(t *testing.T) {
+	err := initDb()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	storage := Storage{
+		Table:         TestTableName,
+		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
+		AwsDisableSSL: DisableSSL,
+		LockTimeout:   6 * time.Second,
+	}
+
+	// create lock
+	key := "test1"
+	err = storage.Lock(key)
+	if err != nil {
+		t.Errorf("error creating lock: %s", err.Error())
+	}
+
+	// try to create lock again, it should take about 5-10 seconds to return
+	before := time.Now()
+	err = storage.Lock(key)
+	if err != nil {
+		t.Errorf("error creating lock second time: %s", err.Error())
+	}
+	if time.Since(before) < 5*time.Second {
+		t.Errorf("creating second lock finished quicker than it shoud, in %v seconds", time.Since(before).Seconds())
+	}
+
+	// try to unlock a key that doesn't exist
+	err = storage.Unlock("doesntexist")
+	if err != nil {
+		t.Errorf("got error unlocking non-existant key")
+	}
+}
+
+func TestDynamoDBStorage_LoadErrNotExist(t *testing.T) {
+	err := initDb()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	storage := Storage{
+		Table:         TestTableName,
+		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
+		AwsDisableSSL: DisableSSL,
+	}
+
+	_, err = storage.Load("notarealkey")
+	_, isNotErrNotExist := err.(certmagic.ErrNotExist)
+	if !isNotErrNotExist {
+		t.Errorf("err was not a ErrNotExist, got: %s", err.Error())
+	}
 }
