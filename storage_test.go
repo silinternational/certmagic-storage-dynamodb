@@ -138,9 +138,10 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 			},
 			wantErr: false,
 			expected: &Storage{
-				Table:       "Testing123",
-				AwsSession:  defaultAwsSession,
-				LockTimeout: lockTimeoutMinutes,
+				Table:               "Testing123",
+				AwsSession:          defaultAwsSession,
+				LockTimeout:         lockTimeoutMinutes,
+				LockPollingInterval: lockPollingInterval,
 			},
 		},
 	}
