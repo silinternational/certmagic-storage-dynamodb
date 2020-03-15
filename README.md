@@ -2,6 +2,7 @@
 [![Codeship Status for silinternational/certmagic-storage-dynamodb](https://app.codeship.com/projects/ce620930-4784-0138-3c3b-420bfa3912c0/status?branch=develop)](https://app.codeship.com/projects/388799)
 [![Go Report Card](https://goreportcard.com/badge/github.com/silinternational/certmagic-storage-dynamodb)](https://goreportcard.com/report/github.com/silinternational/certmagic-storage-dynamodb)
 [![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/silinternational/certmagic-storage-dynamodb/badges/quality-score.png?b=develop)](https://scrutinizer-ci.com/g/silinternational/certmagic-storage-dynamodb/?branch=develop)
+[![Code Coverage](https://scrutinizer-ci.com/g/silinternational/certmagic-storage-dynamodb/badges/coverage.png?b=develop)](https://scrutinizer-ci.com/g/silinternational/certmagic-storage-dynamodb/?branch=develop)
 
 [CertMagic](https://github.com/caddyserver/certmagic) Is an awesome package for doing all the 
 heavy lifting with Let's Encrypt for certificate provisioning and use. In order to be flexible 
