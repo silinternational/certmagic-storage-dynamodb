@@ -6,7 +6,7 @@
 
 [CertMagic](https://github.com/caddyserver/certmagic) Is an awesome package for doing all the 
 heavy lifting with Let's Encrypt for certificate provisioning and use. In order to be flexible 
-about how you use CertMagic it has support for various methods of storing certificates CertMagic has a 
+about how you use CertMagic, it has support for various methods of storing certificates. CertMagic has a 
 [Storage Interface](https://pkg.go.dev/github.com/caddyserver/certmagic?tab=doc#Storage) 
 allowing for multiple storage implementations. 
 
