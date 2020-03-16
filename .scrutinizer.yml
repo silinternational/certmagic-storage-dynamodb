@@ -1,0 +1,38 @@
+checks:
+  go: true
+build:
+  environment:
+    go: go1.14
+    variables:
+      GO_ENV: test
+      AWS_ENDPOINT: localhost:8000
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: abc123
+      AWS_SECRET_ACCESS_KEY: abc123
+  nodes:
+    analysis:
+      project_setup:
+        override:
+          - 'true'
+      tests:
+        override:
+          - go-scrutinizer-run
+          - govet-run
+          - golint-run
+    coverage:
+      services:
+        dynamodb:
+          image: amazon/dynamodb-local
+          ports:
+            - 8000
+          ramdisks:
+            - /data
+      tests:
+        override:
+          - command: make
+            coverage:
+              file: 'cover.out'
+              format: 'go-cc'
+filter:
+  excluded_paths:
+    - "*_test.go"

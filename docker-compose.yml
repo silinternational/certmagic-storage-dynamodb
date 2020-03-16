@@ -1,0 +1,21 @@
+version: "3"
+
+services:
+
+  dynamo:
+    image: amazon/dynamodb-local
+    ports:
+    - "8000:8000"
+
+  test:
+    build: .
+    volumes:
+    - ./:/certmagic-storage-dynamodb
+    environment:
+      AWS_ENDPOINT: dynamo:8000
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: abc123
+      AWS_SECRET_ACCESS_KEY: abc123
+    depends_on:
+      - dynamo
+    command: make
