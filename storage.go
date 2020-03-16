@@ -2,6 +2,7 @@ package dynamodbstorage
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -47,7 +48,7 @@ type Storage struct {
 // initConfig initializes configuration for table name and AWS session
 func (s *Storage) initConfig() error {
 	if s.Table == "" {
-		return fmt.Errorf("config error: table name is required")
+		return errors.New("config error: table name is required")
 	}
 
 	if s.LockTimeout == 0*time.Second {
@@ -82,7 +83,7 @@ func (s *Storage) Store(key string, value []byte) error {
 	encVal := base64.StdEncoding.EncodeToString(value)
 
 	if key == "" {
-		return fmt.Errorf("key must not be empty")
+		return errors.New("key must not be empty")
 	}
 
 	svc := dynamodb.New(s.AwsSession)
@@ -112,7 +113,7 @@ func (s *Storage) Load(key string) ([]byte, error) {
 	}
 
 	if key == "" {
-		return []byte{}, fmt.Errorf("key must not be empty")
+		return []byte{}, errors.New("key must not be empty")
 	}
 
 	domainItem, err := s.getItem(key)
@@ -126,7 +127,7 @@ func (s *Storage) Delete(key string) error {
 	}
 
 	if key == "" {
-		return fmt.Errorf("key must not be empty")
+		return errors.New("key must not be empty")
 	}
 
 	svc := dynamodb.New(s.AwsSession)
@@ -170,7 +171,7 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 	}
 
 	if prefix == "" {
-		return []string{}, fmt.Errorf("key prefix must not be empty")
+		return []string{}, errors.New("key prefix must not be empty")
 	}
 
 	svc := dynamodb.New(s.AwsSession)
