@@ -11,7 +11,7 @@ about how you use CertMagic, it has support for various methods of storing certi
 allowing for multiple storage implementations. 
 
 This package is an implementation of the Storage interface that uses DynamoDB for certificate
-storage. We created this implementation for use in a clustered environment were our application
+storage. We created this implementation for use in a clustered environment where our application
 runs in containers behind a load-balancer with no shared filesystem.
 
 ## Authentication with AWS
