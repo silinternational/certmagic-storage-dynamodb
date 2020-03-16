@@ -102,11 +102,7 @@ func (s *Storage) Store(key string, value []byte) error {
 	}
 
 	_, err := svc.PutItem(input)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
 // Load retrieves the value at key.
@@ -120,11 +116,7 @@ func (s *Storage) Load(key string) ([]byte, error) {
 	}
 
 	domainItem, err := s.getItem(key)
-	if err != nil {
-		return nil, err
-	}
-
-	return []byte(domainItem.Contents), nil
+	return []byte(domainItem.Contents), err
 }
 
 // Delete deletes key.

@@ -42,14 +42,8 @@ func initDb() error {
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
-			case dynamodb.ErrCodeResourceInUseException:
-				return aerr
 			case dynamodb.ErrCodeResourceNotFoundException:
 				// this is fine
-			case dynamodb.ErrCodeLimitExceededException:
-				return aerr
-			case dynamodb.ErrCodeInternalServerError:
-				return aerr
 			default:
 				return aerr
 			}
@@ -79,24 +73,7 @@ func initDb() error {
 		TableName: aws.String(storage.Table),
 	}
 	_, err = svc.CreateTable(createTable)
-	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case dynamodb.ErrCodeResourceInUseException:
-				return aerr
-			case dynamodb.ErrCodeLimitExceededException:
-				return aerr
-			case dynamodb.ErrCodeInternalServerError:
-				return aerr
-			default:
-				return aerr
-			}
-		} else {
-			return err
-		}
-	}
-
-	return nil
+	return err
 }
 
 func TestDynamoDBStorage_initConfg(t *testing.T) {
@@ -208,6 +185,20 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "empty key should error",
+			fields: fields{
+				Table:         TestTableName,
+				AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+				AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
+				AwsDisableSSL: DisableSSL,
+			},
+			args: args{
+				key:   "",
+				value: []byte("value"),
+			},
+			wantErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -218,15 +209,21 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 				AwsRegion:     tt.fields.AwsRegion,
 				AwsDisableSSL: tt.fields.AwsDisableSSL,
 			}
-			if err := s.Store(tt.args.key, tt.args.value); (err != nil) != tt.wantErr {
+			err := s.Store(tt.args.key, tt.args.value)
+			if (err != nil) != tt.wantErr {
 				t.Errorf("Store() error = %v, wantErr %v", err, tt.wantErr)
+				return
 			}
-			loaded, err := s.Load(tt.args.key)
-			if err != nil {
-				t.Errorf("failed to load after store: %s", err.Error())
-			}
-			if string(loaded) != string(tt.args.value) {
-				t.Errorf("Load() returned value other than expected. Expected: %s, Actual: %s", string(tt.args.value), string(loaded))
+			if err == nil {
+				loaded, err := s.Load(tt.args.key)
+				if err != nil {
+					t.Errorf("failed to load after store: %s", err.Error())
+					return
+				}
+				if string(loaded) != string(tt.args.value) {
+					t.Errorf("Load() returned value other than expected. Expected: %s, Actual: %s", string(tt.args.value), string(loaded))
+					return
+				}
 			}
 		})
 	}
@@ -388,12 +385,14 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 		return
 	}
 
+	lockTimeout := 1 * time.Second
+
 	storage := Storage{
 		Table:         TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
-		LockTimeout:   6 * time.Second,
+		LockTimeout:   lockTimeout,
 	}
 
 	// create lock
@@ -409,7 +408,7 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 	if err != nil {
 		t.Errorf("error creating lock second time: %s", err.Error())
 	}
-	if time.Since(before) < 5*time.Second {
+	if time.Since(before) < lockTimeout {
 		t.Errorf("creating second lock finished quicker than it shoud, in %v seconds", time.Since(before).Seconds())
 	}
 
