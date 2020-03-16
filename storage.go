@@ -44,7 +44,7 @@ type Storage struct {
 	LockPollingInterval time.Duration
 }
 
-// initConfig initializes configuration for table nam and AWS session
+// initConfig initializes configuration for table name and AWS session
 func (s *Storage) initConfig() error {
 	if s.Table == "" {
 		return fmt.Errorf("config error: table name is required")
