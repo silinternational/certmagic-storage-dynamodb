@@ -402,7 +402,7 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 		t.Errorf("error creating lock: %s", err.Error())
 	}
 
-	// try to create lock again, it should take about 5-10 seconds to return
+	// try to create lock again, it should take about 1-2 seconds to return
 	before := time.Now()
 	err = storage.Lock(key)
 	if err != nil {

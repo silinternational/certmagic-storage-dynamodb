@@ -257,14 +257,19 @@ func (s *Storage) Lock(key string) error {
 	lockKey := fmt.Sprintf("LOCK-%s", key)
 
 	// Check for existing lock
-	existing, err := s.getItem(lockKey)
-	_, isErrNotExists := err.(certmagic.ErrNotExist)
-	if err != nil && !isErrNotExists {
-		return err
-	}
+	for {
+		existing, err := s.getItem(lockKey)
+		_, isErrNotExists := err.(certmagic.ErrNotExist)
+		if err != nil && !isErrNotExists {
+			return err
+		}
 
-	// Lock exists, check if expired or sleep 5 seconds and check again
-	if existing.Contents != "" {
+		// if lock doesn't exist or is empty, break to create a new one
+		if isErrNotExists || existing.Contents == "" {
+			break
+		}
+
+		// Lock exists, check if expired or sleep 5 seconds and check again
 		expires, err := time.Parse(time.RFC3339, existing.Contents)
 		if err != nil {
 			return err
@@ -273,11 +278,10 @@ func (s *Storage) Lock(key string) error {
 			if err := s.Unlock(key); err != nil {
 				return err
 			}
-			return s.Lock(key)
+			break
 		}
 
 		time.Sleep(s.LockPollingInterval)
-		return s.Lock(key)
 	}
 
 	// lock doesn't exist, create it
