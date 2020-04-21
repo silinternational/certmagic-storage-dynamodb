@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
 )
 
@@ -392,7 +393,7 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
-		LockTimeout:   lockTimeout,
+		LockTimeout:   caddy.Duration(lockTimeout),
 	}
 
 	// create lock
@@ -402,7 +403,7 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 		t.Errorf("error creating lock: %s", err.Error())
 	}
 
-	// try to create lock again, it should take about 5-10 seconds to return
+	// try to create lock again, it should take about 1-2 seconds to return
 	before := time.Now()
 	err = storage.Lock(key)
 	if err != nil {

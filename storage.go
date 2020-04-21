@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 
+	caddy "github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
 )
 
@@ -19,8 +20,8 @@ const (
 	contentsAttribute    = "Contents"
 	primaryKeyAttribute  = "PrimaryKey"
 	lastUpdatedAttribute = "LastUpdated"
-	lockTimeoutMinutes   = 5 * time.Minute
-	lockPollingInterval  = 5 * time.Second
+	lockTimeoutMinutes   = caddy.Duration(5 * time.Minute)
+	lockPollingInterval  = caddy.Duration(5 * time.Second)
 )
 
 // Item holds structure of domain, certificate data,
@@ -36,13 +37,13 @@ type Item struct {
 // Also implements certmagic.Locker to facilitate locking
 // and unlocking of cert data during storage
 type Storage struct {
-	Table               string
-	AwsSession          *session.Session
-	AwsEndpoint         string
-	AwsRegion           string
-	AwsDisableSSL       bool
-	LockTimeout         time.Duration
-	LockPollingInterval time.Duration
+	Table               string           `json:"table,omitempty"`
+	AwsSession          *session.Session `json:"-"`
+	AwsEndpoint         string           `json:"aws_endpoint,omitempty"`
+	AwsRegion           string           `json:"aws_region,omitempty"`
+	AwsDisableSSL       bool             `json:"aws_disable_ssl,omitempty"`
+	LockTimeout         caddy.Duration   `json:"lock_timeout,omitempty"`
+	LockPollingInterval caddy.Duration   `json:"lock_polling_interval,omitempty"`
 }
 
 // initConfig initializes configuration for table name and AWS session
@@ -51,10 +52,10 @@ func (s *Storage) initConfig() error {
 		return errors.New("config error: table name is required")
 	}
 
-	if s.LockTimeout == 0*time.Second {
+	if s.LockTimeout == 0 {
 		s.LockTimeout = lockTimeoutMinutes
 	}
-	if s.LockPollingInterval == 0*time.Second {
+	if s.LockPollingInterval == 0 {
 		s.LockPollingInterval = lockPollingInterval
 	}
 
@@ -257,14 +258,19 @@ func (s *Storage) Lock(key string) error {
 	lockKey := fmt.Sprintf("LOCK-%s", key)
 
 	// Check for existing lock
-	existing, err := s.getItem(lockKey)
-	_, isErrNotExists := err.(certmagic.ErrNotExist)
-	if err != nil && !isErrNotExists {
-		return err
-	}
+	for {
+		existing, err := s.getItem(lockKey)
+		_, isErrNotExists := err.(certmagic.ErrNotExist)
+		if err != nil && !isErrNotExists {
+			return err
+		}
 
-	// Lock exists, check if expired or sleep 5 seconds and check again
-	if existing.Contents != "" {
+		// if lock doesn't exist or is empty, break to create a new one
+		if isErrNotExists || existing.Contents == "" {
+			break
+		}
+
+		// Lock exists, check if expired or sleep 5 seconds and check again
 		expires, err := time.Parse(time.RFC3339, existing.Contents)
 		if err != nil {
 			return err
@@ -273,15 +279,14 @@ func (s *Storage) Lock(key string) error {
 			if err := s.Unlock(key); err != nil {
 				return err
 			}
-			return s.Lock(key)
+			break
 		}
 
-		time.Sleep(s.LockPollingInterval)
-		return s.Lock(key)
+		time.Sleep(time.Duration(s.LockPollingInterval))
 	}
 
 	// lock doesn't exist, create it
-	contents := []byte(time.Now().Add(s.LockTimeout).Format(time.RFC3339))
+	contents := []byte(time.Now().Add(time.Duration(s.LockTimeout)).Format(time.RFC3339))
 	return s.Store(lockKey, contents)
 }
 
