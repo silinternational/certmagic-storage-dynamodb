@@ -282,7 +282,7 @@ func (s *Storage) Lock(key string) error {
 			break
 		}
 
-		time.Sleep(s.LockPollingInterval)
+		time.Sleep(time.Duration(s.LockPollingInterval))
 	}
 
 	// lock doesn't exist, create it
