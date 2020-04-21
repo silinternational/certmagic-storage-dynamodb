@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
 )
 
@@ -392,7 +393,7 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
-		LockTimeout:   lockTimeout,
+		LockTimeout:   caddy.Duration(lockTimeout),
 	}
 
 	// create lock
