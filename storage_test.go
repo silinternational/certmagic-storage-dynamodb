@@ -1,6 +1,7 @@
 package dynamodbstorage
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"testing"
@@ -398,14 +399,14 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 
 	// create lock
 	key := "test1"
-	err = storage.Lock(key)
+	err = storage.Lock(context.TODO(), key)
 	if err != nil {
 		t.Errorf("error creating lock: %s", err.Error())
 	}
 
 	// try to create lock again, it should take about 1-2 seconds to return
 	before := time.Now()
-	err = storage.Lock(key)
+	err = storage.Lock(context.TODO(), key)
 	if err != nil {
 		t.Errorf("error creating lock second time: %s", err.Error())
 	}
