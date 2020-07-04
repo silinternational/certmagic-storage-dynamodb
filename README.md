@@ -33,7 +33,7 @@ package whatever
 import (
     "github.com/caddyserver/certmagic"
 
-    dynamodbstore "github.com/silinternational/certmagic-storage-dynamodb"
+    dynamodbstore "github.com/silinternational/certmagic-storage-dynamodb/v2"
 )
 
 // ...
