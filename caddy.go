@@ -1,7 +1,7 @@
 package dynamodbstorage
 
 import (
-	"github.com/caddyserver/caddy/v2"
+	caddy "github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/certmagic"
 )
@@ -46,9 +46,6 @@ func (s *Storage) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				}
 				s.AwsEndpoint = d.Val()
 			case "aws_region":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
 				s.AwsRegion = d.Val()
 			default:
 				return d.Errf("unrecognized parameter '%s'", d.Val())
