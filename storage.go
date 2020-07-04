@@ -1,6 +1,7 @@
 package dynamodbstorage
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -250,7 +251,7 @@ func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 // is relevant) should put a reasonable expiration on the lock in
 // case Unlock is unable to be called due to some sort of network
 // failure or system crash.
-func (s *Storage) Lock(key string) error {
+func (s *Storage) Lock(ctx context.Context, key string) error {
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -282,7 +283,11 @@ func (s *Storage) Lock(key string) error {
 			break
 		}
 
-		time.Sleep(time.Duration(s.LockPollingInterval))
+		select {
+		case <-time.After(time.Duration(s.LockPollingInterval)):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	// lock doesn't exist, create it
@@ -338,3 +343,6 @@ func (s *Storage) getItem(key string) (Item, error) {
 
 	return domainItem, nil
 }
+
+// Interface guard
+var _ certmagic.Storage = (*Storage)(nil)

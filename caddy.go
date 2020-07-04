@@ -50,6 +50,8 @@ func (s *Storage) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 				s.AwsRegion = d.Val()
+			default:
+				return d.Errf("unrecognized parameter '%s'", d.Val())
 			}
 		}
 	}
