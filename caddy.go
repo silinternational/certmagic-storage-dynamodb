@@ -1,7 +1,7 @@
 package dynamodbstorage
 
 import (
-	caddy "github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/certmagic"
 )
