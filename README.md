@@ -39,14 +39,15 @@ import (
 // ...
 
 certmagic.Default.Storage = &dynamodbstore.DynamoDBStorage{
-    Table:               "CertMagic",
-    LockTimeout:         2 * time.Minute // optional: default is 5 minutes
-    LockPollingInterval: 2 * time.Second // optional: default is 5 seconds
+    TableName:             "CertMagic",
+    LockTimeout:           2 * time.Minute // optional: default is 1 minute
+    LockFreshnessInterval: 10 * time.Second // optional: default is 10 seconds
+    LockPollingInterval:   4 * time.Second // optional: default is 1 second
 }
 
 // ...
 ```
-Only the table name is required, but you can also override the default values for `LockTimeout` and 
+Only the table name is required, but you can also override the default values for `LockTimeout`, `LockFreshnessInterval` and 
 `LockPollingTimeout` if you want. Technically you can also override `AwsEndpoint`, `AwsRegion`, and 
 `AwsDisableSSL` if you are running your own DynamoDB service. These settings are used in the unit tests
 so you can look there for examples. 
@@ -58,6 +59,8 @@ and just run the tests from your local system, just be sure to adjust the `AWS_E
 variable to point to where you have `dynamodb-local` running. 
 
 ## Creating the DynamoDB Table 
+
+Note that only single region tables are supported.  Global tables or custom multi-region setups should work, but may experience locking issues due to the eventually consistent nature of DynamoDB.
 
 ### Command line:
 ```
