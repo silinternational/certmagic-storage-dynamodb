@@ -36,7 +36,7 @@ func (s *Storage) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		if !d.NextArg() {
 			return d.ArgErr()
 		}
-		s.Table = d.Val()
+		s.TableName = d.Val()
 
 		for nesting := d.Nesting(); d.NextBlock(nesting); {
 			switch d.Val() {

@@ -20,7 +20,7 @@ const DisableSSL = true
 
 func initDb() error {
 	storage := Storage{
-		Table:         TestTableName,
+		TableName:     TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: true,
@@ -38,7 +38,7 @@ func initDb() error {
 
 	// attempt to delete table in case already exists
 	deleteTable := &dynamodb.DeleteTableInput{
-		TableName: aws.String(storage.Table),
+		TableName: aws.String(storage.TableName),
 	}
 	_, err = svc.DeleteTable(deleteTable)
 	if err != nil {
@@ -72,28 +72,17 @@ func initDb() error {
 			ReadCapacityUnits:  aws.Int64(3),
 			WriteCapacityUnits: aws.Int64(3),
 		},
-		TableName: aws.String(storage.Table),
+		TableName: aws.String(storage.TableName),
 	}
 	_, err = svc.CreateTable(createTable)
 	return err
 }
 
 func TestDynamoDBStorage_initConfg(t *testing.T) {
-	defaultAwsSession, err := session.NewSession(&aws.Config{
-		Endpoint:   aws.String(""),
-		Region:     aws.String(""),
-		DisableSSL: aws.Bool(DisableSSL),
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
 	type fields struct {
-		Table         string
+		TableName     string
 		KeyPrefix     string
 		ColumnName    string
-		AwsSession    *session.Session
 		AwsEndpoint   string
 		AwsRegion     string
 		AwsDisableSSL bool
@@ -113,22 +102,21 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 		{
 			name: "defaults - provide only table name",
 			fields: fields{
-				Table: "Testing123",
+				TableName: "Testing123",
 			},
 			wantErr: false,
 			expected: &Storage{
-				Table:               "Testing123",
-				AwsSession:          defaultAwsSession,
-				LockTimeout:         lockTimeoutMinutes,
-				LockPollingInterval: lockPollingInterval,
+				TableName:             "Testing123",
+				LockTimeout:           defaultLockTimeoutMinutes,
+				LockFreshnessInterval: defaultLockFreshnessInterval,
+				LockPollingInterval:   defaultLockPollingInterval,
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Storage{
-				Table:         tt.fields.Table,
-				AwsSession:    tt.fields.AwsSession,
+				TableName:     tt.fields.TableName,
 				AwsEndpoint:   tt.fields.AwsEndpoint,
 				AwsRegion:     tt.fields.AwsRegion,
 				AwsDisableSSL: tt.fields.AwsDisableSSL,
@@ -137,11 +125,11 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 				t.Errorf("initConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			// unset AwsSession since it is too complicated for reflection testing
-			s.AwsSession = tt.expected.AwsSession
+			// unset complicated objects not requiring tests
+			s.Dynamo = tt.expected.Dynamo
+			s.Table = tt.expected.Table
 			if !reflect.DeepEqual(tt.expected, s) {
-				t.Errorf("Expected does not match actual: %+v != %+v. \nAwsSession \n\texpected: %+v, \n\tactual: %+v",
-					tt.expected, s, tt.expected.AwsSession, s.AwsSession)
+				t.Errorf("Expected does not match actual: %+v != %+v", tt.expected, s)
 			}
 		})
 	}
@@ -155,10 +143,9 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 	}
 
 	type fields struct {
-		Table         string
+		TableName     string
 		KeyPrefix     string
 		ColumnName    string
-		AwsSession    *session.Session
 		AwsEndpoint   string
 		AwsRegion     string
 		AwsDisableSSL bool
@@ -176,7 +163,7 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 		{
 			name: "simple key/value store",
 			fields: fields{
-				Table:         TestTableName,
+				TableName:     TestTableName,
 				AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 				AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 				AwsDisableSSL: DisableSSL,
@@ -190,7 +177,7 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 		{
 			name: "empty key should error",
 			fields: fields{
-				Table:         TestTableName,
+				TableName:     TestTableName,
 				AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 				AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 				AwsDisableSSL: DisableSSL,
@@ -205,8 +192,7 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Storage{
-				Table:         tt.fields.Table,
-				AwsSession:    tt.fields.AwsSession,
+				TableName:     tt.fields.TableName,
 				AwsEndpoint:   tt.fields.AwsEndpoint,
 				AwsRegion:     tt.fields.AwsRegion,
 				AwsDisableSSL: tt.fields.AwsDisableSSL,
@@ -239,7 +225,7 @@ func TestDynamoDBStorage_List(t *testing.T) {
 	}
 
 	storage := Storage{
-		Table:         TestTableName,
+		TableName:     TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
@@ -304,7 +290,7 @@ func TestDynamoDBStorage_Stat(t *testing.T) {
 	}
 
 	storage := Storage{
-		Table:         TestTableName,
+		TableName:     TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
@@ -344,7 +330,7 @@ func TestDynamoDBStorage_Delete(t *testing.T) {
 	}
 
 	storage := Storage{
-		Table:         TestTableName,
+		TableName:     TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
@@ -390,7 +376,7 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 	lockTimeout := 1 * time.Second
 
 	storage := Storage{
-		Table:         TestTableName,
+		TableName:     TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
@@ -429,7 +415,7 @@ func TestDynamoDBStorage_LoadErrNotExist(t *testing.T) {
 	}
 
 	storage := Storage{
-		Table:         TestTableName,
+		TableName:     TestTableName,
 		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
