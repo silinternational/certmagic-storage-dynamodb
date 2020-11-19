@@ -27,6 +27,7 @@ const (
 	defaultLockPollingInterval   = caddy.Duration(1 * time.Second)
 	stackTraceBufferSize         = 1024 * 128
 	eFreshLockFileMessage        = "fresh lock file exists: "
+	eDynamoNotFound              = "dynamo: no item found"
 )
 
 // Item holds structure of domain, certificate data,
@@ -144,23 +145,30 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 	if prefix == "" {
 		return []string{}, errors.New("key prefix must not be empty")
 	}
+	var offset dynamo.PagingKey
 	var results []string
-	itr := s.buildListScan(prefix).Iter()
 	for {
-		var page []Item
-		more := itr.Next(&page)
+		itr := s.Table.Scan().
+			Project(primaryKeyAttribute). // this is the only attribute we need for list
+			Filter("begins_with($, ?)", primaryKeyAttribute, prefix).
+			Consistent(true).
+			StartFrom(offset).
+			Iter()
 		if itr.Err() != nil {
 			return []string{}, itr.Err()
 		}
-		for _, item := range page {
+		for {
+			var item Item
+			more := itr.Next(&item)
+			if !more {
+				break
+			}
 			results = append(results, item.PrimaryKey)
 		}
-		if !more {
+		// no more pages to load
+		if itr.LastEvaluatedKey() == nil {
 			break
 		}
-		itr = s.buildListScan(prefix).
-			StartFrom(itr.LastEvaluatedKey()).
-			Iter()
 	}
 	return results, nil
 }
@@ -168,9 +176,10 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 // Stat returns information about key.
 func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
 	item, err := s.readItem(key)
-	// TODO: error if does not exist
-	// return certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
 	if err != nil {
+		if err.Error() == eDynamoNotFound {
+			return certmagic.KeyInfo{}, certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
+		}
 		return certmagic.KeyInfo{}, err
 	}
 	return certmagic.KeyInfo{
@@ -185,16 +194,27 @@ func (s *Storage) lockIsExpired(expiresTimestamp int64) bool {
 	return time.Now().Unix() > expiresTimestamp
 }
 
-func (s *Storage) createLock(key string) error {
-	existing, err := s.readItem(key)
+func (s *Storage) createLockNew(key string) error {
+	item := Item{
+		PrimaryKey:  key,
+		Lock:        time.Now().Add(time.Duration(s.LockTimeout)).Unix(),
+		LastUpdated: time.Now(),
+	}
+	// a record should not exist for key at this moment so if it does
+	// it means another process created it and we should fail
+	err := s.Table.Put(item).
+		If("attribute_not_exists($)", primaryKeyAttribute).
+		Run()
 	if err != nil {
 		return err
 	}
-	if !s.lockIsExpired(existing.Lock) {
-		return errors.New(eFreshLockFileMessage + key)
-	}
+	go s.keepLockFresh(key)
+	return nil
+}
+
+func (s *Storage) createLockExisting(key string, lastUpdated time.Time) error {
 	// no or stale lock -> idempotent create
-	err = s.touchLock(key, existing.LastUpdated)
+	err := s.touchLock(key, lastUpdated)
 	// if error here it likely means our conditional request failed and another process
 	// acquired a lock in between our read and write
 	if err != nil {
@@ -204,9 +224,29 @@ func (s *Storage) createLock(key string) error {
 	return nil
 }
 
+func (s *Storage) createLock(key string) error {
+	existing, err := s.readItem(key)
+	if err == nil {
+		// no error and lock is fresh
+		if !s.lockIsExpired(existing.Lock) {
+			return errors.New(eFreshLockFileMessage + key)
+		}
+		return s.createLockExisting(key, existing.LastUpdated)
+	}
+	// not found is ok. it means we need to create a new record
+	if err.Error() == eDynamoNotFound {
+		return s.createLockNew(key)
+	}
+	return err
+}
+
 func (s *Storage) removeLockfile(key string) error {
 	existing, err := s.readItem(key)
 	if err != nil {
+		// record not found so no lock exists
+		if err.Error() == eDynamoNotFound {
+			return nil
+		}
 		return err
 	}
 	// unlocked by another process
@@ -300,6 +340,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+			continue
 		}
 		// unexpected error
 		return fmt.Errorf("creating lock: %v", err)
