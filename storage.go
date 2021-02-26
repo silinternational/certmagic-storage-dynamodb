@@ -38,13 +38,27 @@ type Item struct {
 // Also implements certmagic.Locker to facilitate locking
 // and unlocking of cert data during storage
 type Storage struct {
-	Table               string           `json:"table,omitempty"`
-	AwsSession          *session.Session `json:"-"`
-	AwsEndpoint         string           `json:"aws_endpoint,omitempty"`
-	AwsRegion           string           `json:"aws_region,omitempty"`
-	AwsDisableSSL       bool             `json:"aws_disable_ssl,omitempty"`
-	LockTimeout         caddy.Duration   `json:"lock_timeout,omitempty"`
-	LockPollingInterval caddy.Duration   `json:"lock_polling_interval,omitempty"`
+	// Table - [required] DynamoDB table name
+	Table      string           `json:"table,omitempty"`
+	AwsSession *session.Session `json:"-"`
+
+	// AwsEndpoint - [optional] provide an override for DynamoDB service.
+	// By default it'll use the standard production DynamoDB endpoints.
+	// Useful for testing with a local DynamoDB instance.
+	AwsEndpoint string `json:"aws_endpoint,omitempty"`
+
+	// AwsRegion - [required] region using DynamoDB in
+	AwsRegion string `json:"aws_region,omitempty"`
+
+	// AwsDisableSSL - [optional] disable SSL for DynamoDB connections. Default: false
+	// Only useful for local testing, do not use outside of local testing.
+	AwsDisableSSL bool `json:"aws_disable_ssl,omitempty"`
+
+	// LockTimeout - [optional] how long to wait for a lock to be created. Default: 5 minutes
+	LockTimeout caddy.Duration `json:"lock_timeout,omitempty"`
+
+	// LockPollingInterval - [optional] how often to check for lock released. Default: 5 seconds
+	LockPollingInterval caddy.Duration `json:"lock_polling_interval,omitempty"`
 }
 
 // initConfig initializes configuration for table name and AWS session
