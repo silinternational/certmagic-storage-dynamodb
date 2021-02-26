@@ -47,7 +47,8 @@ type Storage struct {
 	// Useful for testing with a local DynamoDB instance.
 	AwsEndpoint string `json:"aws_endpoint,omitempty"`
 
-	// AwsRegion - [required] region using DynamoDB in
+	// AwsRegion - [optional] region using DynamoDB in.
+	// Useful for testing with a local DynamoDB instance.
 	AwsRegion string `json:"aws_region,omitempty"`
 
 	// AwsDisableSSL - [optional] disable SSL for DynamoDB connections. Default: false
