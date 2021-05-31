@@ -1,8 +1,14 @@
-# DynamoDB Storage adapter for CertMagic
-[![Codeship Status for silinternational/certmagic-storage-dynamodb](https://app.codeship.com/projects/ce620930-4784-0138-3c3b-420bfa3912c0/status?branch=develop)](https://app.codeship.com/projects/388799)
-[![Go Report Card](https://goreportcard.com/badge/github.com/silinternational/certmagic-storage-dynamodb)](https://goreportcard.com/report/github.com/silinternational/certmagic-storage-dynamodb)
-[![Scrutinizer Code Quality](https://scrutinizer-ci.com/g/silinternational/certmagic-storage-dynamodb/badges/quality-score.png?b=develop)](https://scrutinizer-ci.com/g/silinternational/certmagic-storage-dynamodb/?branch=develop)
-[![Code Coverage](https://scrutinizer-ci.com/g/silinternational/certmagic-storage-dynamodb/badges/coverage.png?b=develop)](https://scrutinizer-ci.com/g/silinternational/certmagic-storage-dynamodb/?branch=develop)
+# SkyDB Storage adapter for CertMagic
+
+[comment]: <> ([![Codeship Status for skynetlabs/certmagic-storage-skydb]&#40;https://app.codeship.com/projects/ce620930-4784-0138-3c3b-420bfa3912c0/status?branch=develop&#41;]&#40;https://app.codeship.com/projects/388799&#41;)
+
+[comment]: <> ([![Go Report Card]&#40;https://goreportcard.com/badge/github.com/skynetlabs/certmagic-storage-skydb&#41;]&#40;https://goreportcard.com/report/github.com/skynetlabs/certmagic-storage-skydb&#41;)
+
+[comment]: <> ([![Scrutinizer Code Quality]&#40;https://scrutinizer-ci.com/g/skynetlabs/certmagic-storage-skydb/badges/quality-score.png?b=develop&#41;]&#40;https://scrutinizer-ci.com/g/skynetlabs/certmagic-storage-skydb/?branch=develop&#41;)
+
+[comment]: <> ([![Code Coverage]&#40;https://scrutinizer-ci.com/g/skynetlabs/certmagic-storage-skydb/badges/coverage.png?b=develop&#41;]&#40;https://scrutinizer-ci.com/g/skynetlabs/certmagic-storage-skydb/?branch=develop&#41;)
+
+This project is a fork of [DynamoDB Storage adapter for CertMagic](https://github.com/silinternational/certmagic-storage-dynamodb), adapted to work with [SkyDB](https://support.siasky.net/key-concepts/skydb).
 
 [CertMagic](https://github.com/caddyserver/certmagic) Is an awesome package for doing all the 
 heavy lifting with Let's Encrypt for certificate provisioning and use. In order to be flexible 
@@ -14,7 +20,10 @@ This package is an implementation of the Storage interface that uses DynamoDB fo
 storage. We created this implementation for use in a clustered environment where our application
 runs in containers behind a load-balancer with no shared filesystem.
 
-## Authentication with AWS
+## Authentication with SkyDB
+
+*Work in progress...*
+<!---
 
 This package uses the AWS Go library for interactions with DynamoDB. As such that library can 
 detect your AWS credentials in multiple ways, in the following order:
@@ -33,7 +42,7 @@ package whatever
 import (
     "github.com/caddyserver/certmagic"
 
-    dynamodbstore "github.com/silinternational/certmagic-storage-dynamodb/v2"
+    dynamodbstore "github.com/skynetlabs/certmagic-storage-skydb/v2"
 )
 
 // ...
@@ -85,10 +94,12 @@ resource "aws_dynamodb_table" "CertMagic" {
 ## Contributing
 Please do, we like reported issues and pull requests. 
 
+-->
+
 ## License
 MIT License
 
-Copyright (c) 2020 SIL International
+Copyright (c) 2021 Skynet Labs
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -1,4 +1,4 @@
-package dynamodbstorage
+package skydbstorage
 
 import (
 	"context"
@@ -21,12 +21,12 @@ const DisableSSL = true
 func initDb() error {
 	storage := Storage{
 		Table:         TestTableName,
-		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: true,
 	}
 	sess, err := session.NewSession(&aws.Config{
-		Endpoint:   &storage.AwsEndpoint,
+		Endpoint:   &storage.SkyDBEndpoint,
 		Region:     &storage.AwsRegion,
 		DisableSSL: &storage.AwsDisableSSL,
 	})
@@ -129,7 +129,7 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 			s := &Storage{
 				Table:         tt.fields.Table,
 				AwsSession:    tt.fields.AwsSession,
-				AwsEndpoint:   tt.fields.AwsEndpoint,
+				SkyDBEndpoint: tt.fields.AwsEndpoint,
 				AwsRegion:     tt.fields.AwsRegion,
 				AwsDisableSSL: tt.fields.AwsDisableSSL,
 			}
@@ -207,7 +207,7 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 			s := &Storage{
 				Table:         tt.fields.Table,
 				AwsSession:    tt.fields.AwsSession,
-				AwsEndpoint:   tt.fields.AwsEndpoint,
+				SkyDBEndpoint: tt.fields.AwsEndpoint,
 				AwsRegion:     tt.fields.AwsRegion,
 				AwsDisableSSL: tt.fields.AwsDisableSSL,
 			}
@@ -240,7 +240,7 @@ func TestDynamoDBStorage_List(t *testing.T) {
 
 	storage := Storage{
 		Table:         TestTableName,
-		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
 	}
@@ -305,7 +305,7 @@ func TestDynamoDBStorage_Stat(t *testing.T) {
 
 	storage := Storage{
 		Table:         TestTableName,
-		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
 	}
@@ -345,7 +345,7 @@ func TestDynamoDBStorage_Delete(t *testing.T) {
 
 	storage := Storage{
 		Table:         TestTableName,
-		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
 	}
@@ -391,7 +391,7 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 
 	storage := Storage{
 		Table:         TestTableName,
-		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
 		LockTimeout:   caddy.Duration(lockTimeout),
@@ -430,7 +430,7 @@ func TestDynamoDBStorage_LoadErrNotExist(t *testing.T) {
 
 	storage := Storage{
 		Table:         TestTableName,
-		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: DisableSSL,
 	}

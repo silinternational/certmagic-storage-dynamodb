@@ -1,4 +1,4 @@
-package dynamodbstorage
+package skydbstorage
 
 import (
 	"github.com/caddyserver/caddy/v2"
@@ -7,13 +7,13 @@ import (
 )
 
 func init() {
-	caddy.RegisterModule(Storage{})
+	caddy.RegisterModule(Storage{}) // TODO Make this a constructor
 }
 
 // CaddyModule returns the Caddy module information.
 func (Storage) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "caddy.storage.dynamodb",
+		ID:  "caddy.storage.skydb",
 		New: func() caddy.Module { return new(Storage) },
 	}
 }
@@ -25,9 +25,14 @@ func (s *Storage) CertMagicStorage() (certmagic.Storage, error) {
 
 // UnmarshalCaddyfile sets up the storage module from Caddyfile tokens. Syntax:
 //
+// TODO: This needs to be adapted to SkyDB
 // dynamodb <table_name> {
 //     aws_endpoint <endpoint>
 //     aws_region   <region>
+// }
+//
+// skydb <base64_pubkey> {
+// 		skydb_endpoint <endpoint> TODO Do we even need this?
 // }
 //
 // Only the table name is required.
@@ -40,16 +45,11 @@ func (s *Storage) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 
 		for nesting := d.Nesting(); d.NextBlock(nesting); {
 			switch d.Val() {
-			case "aws_endpoint":
+			case "skydb_endpoint":
 				if !d.NextArg() {
 					return d.ArgErr()
 				}
-				s.AwsEndpoint = d.Val()
-			case "aws_region":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				s.AwsRegion = d.Val()
+				s.SkyDBEndpoint = d.Val()
 			default:
 				return d.Errf("unrecognized parameter '%s'", d.Val())
 			}

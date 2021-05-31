@@ -16,6 +16,11 @@ services:
       AWS_DEFAULT_REGION: us-east-1
       AWS_ACCESS_KEY_ID: abc123
       AWS_SECRET_ACCESS_KEY: abc123
+      SKYDB_ENDPOINT: localhost:9980
+      SKYDB_SEC_KEY: R2ZwfGghZHm75i0b5Wv12P1jm6ULtIthcAszSZuH5S482JTaSwfi8m+AlvhqCmwFYKyi3Ev53a7MbJ7yUGxiBw==
+      SKYDB_PUB_KEY: PNiU2ksH4vJvgJb4agpsBWCsotxL+d2uzGye8lBsYgc=
+      SKYDB_DATA_KEY: FvyIax1rlzkpOKsGHGYO4qi/bNgXnjvWFpNXXq13hRc=
+
     depends_on:
       - dynamo
     command: make
