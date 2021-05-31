@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gitlab.com/NebulousLabs/fastrand"
 	"log"
 	"time"
 
@@ -38,7 +39,7 @@ var (
 // and last updated for marshaling with SkyDB
 type Item struct {
 	PrimaryKey  string    `json:"PrimaryKey"`
-	Contents    string    `json:"Contents"`
+	Contents    []byte    `json:"Contents"`
 	LastUpdated time.Time `json:"LastUpdated"`
 }
 
@@ -47,8 +48,8 @@ type Item struct {
 // record that holds a full list of stored keys. This allows us to implement
 // the List functionality.
 type ItemRecord struct {
-	Item            Item   `json:"Item"`
-	KeysListDataKey []byte `json:"KeysListDataKey"`
+	Item            Item        `json:"Item"`
+	KeysListDataKey crypto.Hash `json:"KeysListDataKey"`
 }
 
 // Storage implements certmagic.Storage to facilitate
@@ -98,16 +99,69 @@ func (s *Storage) Store(key string, value []byte) error {
 		return errors.New("key must not be empty")
 	}
 	dataKey := crypto.HashBytes([]byte(key))
-	rev, exists := s.revisionsCache[key]
-	if exists {
-		rev++
-	}
-	err := s.SkyDB.Write(value, dataKey, rev)
+	// Get the item record.
+	// Note: Getting the revision here and using it later has a theoretical
+	// chance of creating a race. This is because of the registry's internal
+	// behaviour of allowing an update of an existing revision if the hash of
+	// the data that comes second is numerically higher than the hash of the
+	// data that comes first. This isn't critical in our current use case.
+	ir, rev, err := s.getItemRecord(key)
 	if err != nil {
 		return err
 	}
-	s.revisionsCache[key] = rev
-	return nil
+	var keyList map[string]bool
+	var keyListRev uint64 = -1 // we'll increment this before using it
+	// Fetch the key list if it exists. Initialise it otherwise.
+	if !isEmpty(ir.KeysListDataKey[:]) {
+		// Get key list and its revision.
+		var klData []byte
+		klData, keyListRev, err = s.SkyDB.Read(ir.KeysListDataKey)
+		if err != nil {
+			return errors.New("failed to get key list from SkyDB. Error: " + err.Error())
+		}
+		err = json.Unmarshal(klData, &keyList)
+		if err != nil {
+			return errors.New("failed to unmarshal key list. Error: " + err.Error())
+		}
+	} else {
+		// Create a dataKey for the list of keys.
+		fastrand.Read(ir.KeysListDataKey[:])
+	}
+
+	keyListChanged := false
+	// Are we deleting the entry? If so, remove the key from the key list.
+	// Otherwise add it to the list.
+	if slicesEqual(value, emptyRegistryEntry[:]) {
+		delete(keyList, key)
+		keyListChanged = true
+	} else {
+		_, exists := keyList[key]
+		if !exists {
+			keyList[key] = true
+			keyListChanged = true
+		}
+	}
+	if keyListChanged {
+		bytes, err := json.Marshal(keyList)
+		if err != nil {
+			return errors.New("failed to serialise a new key list. Error: " + err.Error())
+		}
+		err = s.SkyDB.Write(bytes, ir.KeysListDataKey, keyListRev+1)
+		if err != nil {
+			return errors.New("failed to store the key list. Error: " + err.Error())
+		}
+	}
+
+	// Update the item.
+	ir.Item.PrimaryKey = key
+	ir.Item.Contents = value
+	ir.Item.LastUpdated = time.Now().UTC()
+	// Store the key's new value
+	bytes, err := json.Marshal(ir)
+	if err != nil {
+		return errors.New("failed to marshal the item record. Error: " + err.Error())
+	}
+	return s.SkyDB.Write(bytes, dataKey, rev)
 }
 
 // Load retrieves the value at key.
@@ -120,8 +174,8 @@ func (s *Storage) Load(key string) ([]byte, error) {
 		return []byte{}, errors.New("key must not be empty")
 	}
 
-	domainItem, _, err := s.getItem(key)
-	return []byte(domainItem.Contents), err
+	domainIR, _, err := s.getItemRecord(key)
+	return []byte(domainIR.Item.Contents), err
 }
 
 // Delete deletes key.
@@ -199,15 +253,14 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 
 // Stat returns information about key.
 func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
-	domainItem, rev, err := s.getItem(key)
+	domainIR, _, err := s.getItemRecord(key)
 	if err != nil {
 		return certmagic.KeyInfo{}, err
 	}
-	s.revisionsCache[key] = rev
 	return certmagic.KeyInfo{
 		Key:        key,
-		Modified:   domainItem.LastUpdated,
-		Size:       int64(len(domainItem.Contents)),
+		Modified:   domainIR.Item.LastUpdated,
+		Size:       int64(len(domainIR.Item.Contents)),
 		IsTerminal: true,
 	}, nil
 }
@@ -238,16 +291,16 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 
 	// Check for existing lock
 	for {
-		existing, _, err := s.getItem(lockKey)
+		ir, _, err := s.getItemRecord(lockKey)
 		if err != nil {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
-		if existing.Contents == "" {
+		if isEmpty(ir.Item.Contents) {
 			break
 		}
 		// Lock exists, check if expired or sleep 5 seconds and check again
-		expires, err := time.Parse(time.RFC3339, existing.Contents)
+		expires, err := time.Parse(time.RFC3339, string(ir.Item.Contents))
 		if err != nil {
 			return err
 		}
@@ -284,28 +337,40 @@ func (s *Storage) Unlock(key string) error {
 	return s.Delete(lockKey)
 }
 
-func (s *Storage) getItem(key string) (Item, uint64, error) {
+// getItemRecord fetches an ItemRecord from SkyDB.
+func (s *Storage) getItemRecord(key string) (ItemRecord, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
 	if err != nil {
-		return Item{}, 0, err
+		return ItemRecord{}, 0, err
 	}
-	// Check if `data` is empty, i.e. the item is deleted.
+	// Check if `data` is empty, i.e. the item never existed.
 	if isEmpty(data) {
-		return Item{}, 0, nil
+		return ItemRecord{}, 0, nil
 	}
-	var it Item
-	err = json.Unmarshal(data, &it)
+	var ir ItemRecord
+	err = json.Unmarshal(data, &ir)
 	if err != nil {
-		return Item{}, 0, err
+		return ItemRecord{}, 0, err
 	}
-	s.revisionsCache[key] = rev
-	return it, rev, nil
+	return ir, rev, nil
 }
 
 func isEmpty(data []byte) bool {
 	for _, v := range data {
 		if v > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func slicesEqual(s1, s2 []byte) bool {
+	if len(s1) != len(s2) {
+		return false
+	}
+	for i := 0; i < len(s1); i++ {
+		if s1[i] != s2[i] {
 			return false
 		}
 	}
