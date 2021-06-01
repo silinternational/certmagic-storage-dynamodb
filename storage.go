@@ -2,30 +2,28 @@ package skydbstorage
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"gitlab.com/NebulousLabs/fastrand"
-	"log"
+	"strings"
 	"time"
 
 	"github.com/skynetlabs/certmagic-storage-skydb/skydb"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
 	"go.sia.tech/siad/crypto"
 )
 
 const (
-	contentsAttribute    = "Contents"
-	primaryKeyAttribute  = "PrimaryKey"
-	lastUpdatedAttribute = "LastUpdated"
-	lockTimeoutMinutes   = caddy.Duration(5 * time.Minute)
-	lockPollingInterval  = caddy.Duration(5 * time.Second)
+	lockTimeoutMinutes  = caddy.Duration(5 * time.Minute)
+	lockPollingInterval = caddy.Duration(5 * time.Second)
+
+	// keyListDataKeyString points to a global list of known keys. We need this
+	// list for the List functionality. The list will be updated each time we
+	// Store or Delete a key.
+	keyListDataKeyString = "FvyIax1rlzkpOKsGHGYO4qi/bNgXnjvWFpNXXq13hRc="
 )
 
 var (
@@ -43,33 +41,15 @@ type Item struct {
 	LastUpdated time.Time `json:"LastUpdated"`
 }
 
-// ItemRecord is an intermediate record that holds a link to the Item value we
-// want to store and retrieve from SkyDB but also a dataKey which points to a
-// record that holds a full list of stored keys. This allows us to implement
-// the List functionality.
-type ItemRecord struct {
-	Item            Item        `json:"Item"`
-	KeysListDataKey crypto.Hash `json:"KeysListDataKey"`
-}
-
 // Storage implements certmagic.Storage to facilitate
 // storage of certificates in DynamoDB for a clustered environment.
 // Also implements certmagic.Locker to facilitate locking
 // and unlocking of cert data during storage
 type Storage struct {
-	SkyDB               *skydb.SkyDB     `json:"-"`
-	Table               string           `json:"table,omitempty"`
-	AwsSession          *session.Session `json:"-"`
-	SkyDBEndpoint       string           `json:"skydb_endpoint,omitempty"` // TODO Do I even need this? If so, use it as custom opts in initConfig.
-	AwsRegion           string           `json:"aws_region,omitempty"`
-	AwsDisableSSL       bool             `json:"aws_disable_ssl,omitempty"`
-	LockTimeout         caddy.Duration   `json:"lock_timeout,omitempty"`
-	LockPollingInterval caddy.Duration   `json:"lock_polling_interval,omitempty"`
-
-	// revisionsCache stores the latest revision we have a for a given dataKey.
-	// This allows us to avoid changing the interfaces used here by passing
-	// revisions.
-	revisionsCache map[string]uint64
+	SkyDB               *skydb.SkyDB   `json:"-"`
+	LockTimeout         caddy.Duration `json:"lock_timeout,omitempty"`
+	LockPollingInterval caddy.Duration `json:"lock_polling_interval,omitempty"`
+	KeyListDataKey      crypto.Hash    `json:"key_list_data_key"`
 }
 
 // initConfig initializes configuration for table name and AWS session
@@ -79,6 +59,15 @@ func (s *Storage) initConfig() error {
 		return err
 	}
 	s.SkyDB = sdb
+
+	dk, err := base64.StdEncoding.DecodeString(keyListDataKeyString)
+	if err != nil {
+		return errors.New("failed to decode key list dataKey. Error: " + err.Error())
+	}
+	if len(dk) != len(s.KeyListDataKey) {
+		return errors.New(fmt.Sprintf("bad size of key list dataKey. Expected %d, got %d.", len(s.KeyListDataKey), len(dk)))
+	}
+	copy(s.KeyListDataKey[:], dk)
 
 	if s.LockTimeout == 0 {
 		s.LockTimeout = lockTimeoutMinutes
@@ -99,33 +88,19 @@ func (s *Storage) Store(key string, value []byte) error {
 		return errors.New("key must not be empty")
 	}
 	dataKey := crypto.HashBytes([]byte(key))
-	// Get the item record.
+	// Get the item.
 	// Note: Getting the revision here and using it later has a theoretical
 	// chance of creating a race. This is because of the registry's internal
 	// behaviour of allowing an update of an existing revision if the hash of
 	// the data that comes second is numerically higher than the hash of the
 	// data that comes first. This isn't critical in our current use case.
-	ir, rev, err := s.getItemRecord(key)
+	it, rev, err := s.getItem(key)
 	if err != nil {
 		return err
 	}
-	var keyList map[string]bool
-	var keyListRev uint64 = -1 // we'll increment this before using it
-	// Fetch the key list if it exists. Initialise it otherwise.
-	if !isEmpty(ir.KeysListDataKey[:]) {
-		// Get key list and its revision.
-		var klData []byte
-		klData, keyListRev, err = s.SkyDB.Read(ir.KeysListDataKey)
-		if err != nil {
-			return errors.New("failed to get key list from SkyDB. Error: " + err.Error())
-		}
-		err = json.Unmarshal(klData, &keyList)
-		if err != nil {
-			return errors.New("failed to unmarshal key list. Error: " + err.Error())
-		}
-	} else {
-		// Create a dataKey for the list of keys.
-		fastrand.Read(ir.KeysListDataKey[:])
+	keyList, keyListRev, err := s.keyList()
+	if err != nil {
+		return err
 	}
 
 	keyListChanged := false
@@ -146,18 +121,18 @@ func (s *Storage) Store(key string, value []byte) error {
 		if err != nil {
 			return errors.New("failed to serialise a new key list. Error: " + err.Error())
 		}
-		err = s.SkyDB.Write(bytes, ir.KeysListDataKey, keyListRev+1)
+		err = s.SkyDB.Write(bytes, s.KeyListDataKey, keyListRev+1)
 		if err != nil {
 			return errors.New("failed to store the key list. Error: " + err.Error())
 		}
 	}
 
 	// Update the item.
-	ir.Item.PrimaryKey = key
-	ir.Item.Contents = value
-	ir.Item.LastUpdated = time.Now().UTC()
+	it.PrimaryKey = key
+	it.Contents = value
+	it.LastUpdated = time.Now().UTC()
 	// Store the key's new value
-	bytes, err := json.Marshal(ir)
+	bytes, err := json.Marshal(it)
 	if err != nil {
 		return errors.New("failed to marshal the item record. Error: " + err.Error())
 	}
@@ -174,8 +149,8 @@ func (s *Storage) Load(key string) ([]byte, error) {
 		return []byte{}, errors.New("key must not be empty")
 	}
 
-	domainIR, _, err := s.getItemRecord(key)
-	return []byte(domainIR.Item.Contents), err
+	domainItem, _, err := s.getItem(key)
+	return domainItem.Contents, err
 }
 
 // Delete deletes key.
@@ -200,7 +175,7 @@ func (s *Storage) Exists(key string) bool {
 // will be enumerated (i.e. "directories"
 // should be walked); otherwise, only keys
 // prefixed exactly by prefix will be listed.
-func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
+func (s *Storage) List(prefix string, _ bool) ([]string, error) {
 	if err := s.initConfig(); err != nil {
 		return []string{}, err
 	}
@@ -209,58 +184,30 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 		return []string{}, errors.New("key prefix must not be empty")
 	}
 
-	svc := dynamodb.New(s.AwsSession)
-	input := &dynamodb.ScanInput{
-		ExpressionAttributeNames: map[string]*string{
-			"#D": aws.String(primaryKeyAttribute),
-		},
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":p": {
-				S: aws.String(prefix),
-			},
-		},
-		FilterExpression: aws.String("begins_with(#D, :p)"),
-		TableName:        aws.String(s.Table),
-		ConsistentRead:   aws.Bool(true),
+	keyList, _, err := s.keyList()
+	if err != nil {
+		return nil, err
 	}
 
 	var matchingKeys []string
-	pageNum := 0
-	err := svc.ScanPages(input,
-		func(page *dynamodb.ScanOutput, lastPage bool) bool {
-			pageNum++
-
-			var items []Item
-			err := dynamodbattribute.UnmarshalListOfMaps(page.Items, &items)
-			if err != nil {
-				log.Printf("error unmarshaling page of items: %s", err.Error())
-				return false
-			}
-
-			for _, i := range items {
-				matchingKeys = append(matchingKeys, i.PrimaryKey)
-			}
-
-			return !lastPage
-		})
-
-	if err != nil {
-		return []string{}, err
+	for key := range keyList {
+		if strings.HasPrefix(key, prefix) {
+			matchingKeys = append(matchingKeys, key)
+		}
 	}
-
 	return matchingKeys, nil
 }
 
 // Stat returns information about key.
 func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
-	domainIR, _, err := s.getItemRecord(key)
+	domainItem, _, err := s.getItem(key)
 	if err != nil {
 		return certmagic.KeyInfo{}, err
 	}
 	return certmagic.KeyInfo{
 		Key:        key,
-		Modified:   domainIR.Item.LastUpdated,
-		Size:       int64(len(domainIR.Item.Contents)),
+		Modified:   domainItem.LastUpdated,
+		Size:       int64(len(domainItem.Contents)),
 		IsTerminal: true,
 	}, nil
 }
@@ -291,16 +238,16 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 
 	// Check for existing lock
 	for {
-		ir, _, err := s.getItemRecord(lockKey)
+		it, _, err := s.getItem(lockKey)
 		if err != nil {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
-		if isEmpty(ir.Item.Contents) {
+		if isEmpty(it.Contents) {
 			break
 		}
 		// Lock exists, check if expired or sleep 5 seconds and check again
-		expires, err := time.Parse(time.RFC3339, string(ir.Item.Contents))
+		expires, err := time.Parse(time.RFC3339, string(it.Contents))
 		if err != nil {
 			return err
 		}
@@ -337,25 +284,39 @@ func (s *Storage) Unlock(key string) error {
 	return s.Delete(lockKey)
 }
 
-// getItemRecord fetches an ItemRecord from SkyDB.
-func (s *Storage) getItemRecord(key string) (ItemRecord, uint64, error) {
+// getItem fetches an ItemRecord from SkyDB.
+func (s *Storage) getItem(key string) (Item, uint64, error) {
 	dataKey := crypto.HashBytes([]byte(key))
 	data, rev, err := s.SkyDB.Read(dataKey)
 	if err != nil {
-		return ItemRecord{}, 0, err
+		return Item{}, 0, err
 	}
 	// Check if `data` is empty, i.e. the item never existed.
 	if isEmpty(data) {
-		return ItemRecord{}, 0, nil
+		return Item{}, 0, nil
 	}
-	var ir ItemRecord
-	err = json.Unmarshal(data, &ir)
+	var it Item
+	err = json.Unmarshal(data, &it)
 	if err != nil {
-		return ItemRecord{}, 0, err
+		return Item{}, 0, err
 	}
-	return ir, rev, nil
+	return it, rev, nil
 }
 
+func (s *Storage) keyList() (map[string]bool, uint64, error) {
+	var keyList map[string]bool
+	klData, rev, err := s.SkyDB.Read(s.KeyListDataKey)
+	if err != nil {
+		return nil, 0, errors.New("failed to get key list from SkyDB. Error: " + err.Error())
+	}
+	if !isEmpty(klData) {
+		err = json.Unmarshal(klData, &keyList)
+		if err != nil {
+			return nil, 0, errors.New("failed to unmarshal key list. Error: " + err.Error())
+		}
+	}
+	return keyList, rev, nil
+}
 func isEmpty(data []byte) bool {
 	for _, v := range data {
 		if v > 0 {
