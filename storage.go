@@ -31,6 +31,9 @@ var (
 	// is to write an empty record to it. This is the empty record that we're
 	// going to be writing.
 	emptyRegistryEntry = [34]byte{}
+
+	// errNotExist is returned when the requested item doesn't exist.
+	errNotExist certmagic.ErrNotExist = errors.New("item doesn't exist")
 )
 
 // Item holds structure of domain, certificate data,
@@ -46,29 +49,50 @@ type Item struct {
 // Also implements certmagic.Locker to facilitate locking
 // and unlocking of cert data during storage
 type Storage struct {
-	SkyDB               *skydb.SkyDB   `json:"-"`
+	SkyDB               skydb.SkyDBI   `json:"-"`
 	LockTimeout         caddy.Duration `json:"lock_timeout,omitempty"`
 	LockPollingInterval caddy.Duration `json:"lock_polling_interval,omitempty"`
 	KeyListDataKey      crypto.Hash    `json:"key_list_data_key"`
 }
 
+func NewStorage() (*Storage, error) {
+	s := &Storage{}
+	err := s.initConfig()
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+func NewStorageCustom(keyListDataKey crypto.Hash) (*Storage, error) {
+	s := &Storage{
+		KeyListDataKey: keyListDataKey,
+	}
+	err := s.initConfig()
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
 // initConfig initializes configuration for table name and AWS session
 func (s *Storage) initConfig() error {
-	sdb, err := skydb.New()
-	if err != nil {
-		return err
+	if s.SkyDB == nil {
+		sdb, err := skydb.New()
+		if err != nil {
+			return err
+		}
+		s.SkyDB = sdb
 	}
-	s.SkyDB = sdb
-
-	dk, err := base64.StdEncoding.DecodeString(keyListDataKeyString)
-	if err != nil {
-		return errors.New("failed to decode key list dataKey. Error: " + err.Error())
+	if isEmpty(s.KeyListDataKey[:]) {
+		dk, err := base64.StdEncoding.DecodeString(keyListDataKeyString)
+		if err != nil {
+			return errors.New("failed to decode key list dataKey. Error: " + err.Error())
+		}
+		if len(dk) != len(s.KeyListDataKey) {
+			return errors.New(fmt.Sprintf("bad size of key list dataKey. Expected %d, got %d.", len(s.KeyListDataKey), len(dk)))
+		}
+		copy(s.KeyListDataKey[:], dk)
 	}
-	if len(dk) != len(s.KeyListDataKey) {
-		return errors.New(fmt.Sprintf("bad size of key list dataKey. Expected %d, got %d.", len(s.KeyListDataKey), len(dk)))
-	}
-	copy(s.KeyListDataKey[:], dk)
-
 	if s.LockTimeout == 0 {
 		s.LockTimeout = lockTimeoutMinutes
 	}
@@ -95,12 +119,15 @@ func (s *Storage) Store(key string, value []byte) error {
 	// the data that comes second is numerically higher than the hash of the
 	// data that comes first. This isn't critical in our current use case.
 	it, rev, err := s.getItem(key)
-	if err != nil {
+	if err != nil && !errors.Is(err, errNotExist) {
 		return err
 	}
 	keyList, keyListRev, err := s.keyList()
 	if err != nil {
 		return err
+	}
+	if keyList == nil {
+		keyList = make(map[string]bool)
 	}
 
 	keyListChanged := false
@@ -136,7 +163,7 @@ func (s *Storage) Store(key string, value []byte) error {
 	if err != nil {
 		return errors.New("failed to marshal the item record. Error: " + err.Error())
 	}
-	return s.SkyDB.Write(bytes, dataKey, rev)
+	return s.SkyDB.Write(bytes, dataKey, rev+1)
 }
 
 // Load retrieves the value at key.
@@ -163,7 +190,7 @@ func (s *Storage) Delete(key string) error {
 func (s *Storage) Exists(key string) bool {
 
 	cert, err := s.Load(key)
-	if string(cert) != "" && err == nil {
+	if err == nil && !isEmpty(cert[:]) {
 		return true
 	}
 
@@ -239,7 +266,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	// Check for existing lock
 	for {
 		it, _, err := s.getItem(lockKey)
-		if err != nil {
+		if err != nil && !errors.Is(err, errNotExist) {
 			return err
 		}
 		// if lock doesn't exist or is empty, break to create a new one
@@ -293,7 +320,7 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 	}
 	// Check if `data` is empty, i.e. the item never existed.
 	if isEmpty(data) {
-		return Item{}, 0, nil
+		return Item{}, 0, errNotExist
 	}
 	var it Item
 	err = json.Unmarshal(data, &it)
@@ -304,7 +331,7 @@ func (s *Storage) getItem(key string) (Item, uint64, error) {
 }
 
 func (s *Storage) keyList() (map[string]bool, uint64, error) {
-	var keyList map[string]bool
+	keyList := make(map[string]bool)
 	klData, rev, err := s.SkyDB.Read(s.KeyListDataKey)
 	if err != nil {
 		return nil, 0, errors.New("failed to get key list from SkyDB. Error: " + err.Error())

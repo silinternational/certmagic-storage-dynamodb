@@ -2,185 +2,77 @@ package skydbstorage
 
 import (
 	"context"
-	"os"
-	"reflect"
+	"github.com/skynetlabs/certmagic-storage-skydb/skydb"
+	"gitlab.com/NebulousLabs/fastrand"
+	"go.sia.tech/siad/crypto"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
 )
 
-const TestTableName = "CertMagicTest"
-const DisableSSL = true
-
-func initDb() error {
-	storage := Storage{
-		Table:         TestTableName,
-		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
-		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
-		AwsDisableSSL: true,
-	}
-	sess, err := session.NewSession(&aws.Config{
-		Endpoint:   &storage.SkyDBEndpoint,
-		Region:     &storage.AwsRegion,
-		DisableSSL: &storage.AwsDisableSSL,
-	})
-	if err != nil {
-		return err
-	}
-
-	svc := dynamodb.New(sess)
-
-	// attempt to delete table in case already exists
-	deleteTable := &dynamodb.DeleteTableInput{
-		TableName: aws.String(storage.Table),
-	}
-	_, err = svc.DeleteTable(deleteTable)
-	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case dynamodb.ErrCodeResourceNotFoundException:
-				// this is fine
-			default:
-				return aerr
-			}
-		} else {
-			return err
-		}
-	}
-
-	// create table
-	createTable := &dynamodb.CreateTableInput{
-		AttributeDefinitions: []*dynamodb.AttributeDefinition{
-			{
-				AttributeName: aws.String("PrimaryKey"),
-				AttributeType: aws.String("S"),
-			},
-		},
-		KeySchema: []*dynamodb.KeySchemaElement{
-			{
-				AttributeName: aws.String("PrimaryKey"),
-				KeyType:       aws.String("HASH"),
-			},
-		},
-		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
-			ReadCapacityUnits:  aws.Int64(3),
-			WriteCapacityUnits: aws.Int64(3),
-		},
-		TableName: aws.String(storage.Table),
-	}
-	_, err = svc.CreateTable(createTable)
-	return err
+type SkyDBRecord struct {
+	Data     []byte
+	Revision uint64
 }
 
-func TestDynamoDBStorage_initConfg(t *testing.T) {
-	defaultAwsSession, err := session.NewSession(&aws.Config{
-		Endpoint:   aws.String(""),
-		Region:     aws.String(""),
-		DisableSSL: aws.Bool(DisableSSL),
-	})
+type SkyDBTest struct {
+	store map[crypto.Hash]SkyDBRecord
+}
+
+func (db *SkyDBTest) Read(dataKey crypto.Hash) ([]byte, uint64, error) {
+	if db.store == nil {
+		db.store = make(map[crypto.Hash]SkyDBRecord)
+	}
+	rec, exists := db.store[dataKey]
+	if !exists {
+		return []byte{}, 0, nil // TODO Verify that this is the correct behaviour
+	}
+	return rec.Data, rec.Revision, nil
+}
+
+func (db *SkyDBTest) Write(data []byte, dataKey crypto.Hash, rev uint64) error {
+	if db.store == nil {
+		db.store = make(map[crypto.Hash]SkyDBRecord)
+	}
+	db.store[dataKey] = SkyDBRecord{
+		Data:     data,
+		Revision: rev,
+	}
+	return nil
+}
+
+func initTestStorage() (*Storage, error) {
+	var testKeyListDataKey crypto.Hash
+	fastrand.Read(testKeyListDataKey[:])
+	var skyDbTest skydb.SkyDBI = &SkyDBTest{}
+	return &Storage{
+		SkyDB:               skyDbTest,
+		LockTimeout:         0,
+		LockPollingInterval: 0,
+		KeyListDataKey:      testKeyListDataKey,
+	}, nil
+}
+
+func TestSkyDBStorage_Store(t *testing.T) {
+	storage, err := initTestStorage()
 	if err != nil {
 		t.Error(err)
 		return
 	}
 
-	type fields struct {
-		Table         string
-		KeyPrefix     string
-		ColumnName    string
-		AwsSession    *session.Session
-		AwsEndpoint   string
-		AwsRegion     string
-		AwsDisableSSL bool
-	}
-	tests := []struct {
-		name     string
-		fields   fields
-		wantErr  bool
-		expected *Storage
-	}{
-		{
-			name:     "defaults - should error with empty table",
-			fields:   fields{},
-			wantErr:  true,
-			expected: &Storage{},
-		},
-		{
-			name: "defaults - provide only table name",
-			fields: fields{
-				Table: "Testing123",
-			},
-			wantErr: false,
-			expected: &Storage{
-				Table:               "Testing123",
-				AwsSession:          defaultAwsSession,
-				LockTimeout:         lockTimeoutMinutes,
-				LockPollingInterval: lockPollingInterval,
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := &Storage{
-				Table:         tt.fields.Table,
-				AwsSession:    tt.fields.AwsSession,
-				SkyDBEndpoint: tt.fields.AwsEndpoint,
-				AwsRegion:     tt.fields.AwsRegion,
-				AwsDisableSSL: tt.fields.AwsDisableSSL,
-			}
-			if err := s.initConfig(); (err != nil) != tt.wantErr {
-				t.Errorf("initConfig() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			// unset AwsSession since it is too complicated for reflection testing
-			s.AwsSession = tt.expected.AwsSession
-			if !reflect.DeepEqual(tt.expected, s) {
-				t.Errorf("Expected does not match actual: %+v != %+v. \nAwsSession \n\texpected: %+v, \n\tactual: %+v",
-					tt.expected, s, tt.expected.AwsSession, s.AwsSession)
-			}
-		})
-	}
-}
-
-func TestDynamoDBStorage_Store(t *testing.T) {
-	err := initDb()
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
-	type fields struct {
-		Table         string
-		KeyPrefix     string
-		ColumnName    string
-		AwsSession    *session.Session
-		AwsEndpoint   string
-		AwsRegion     string
-		AwsDisableSSL bool
-	}
 	type args struct {
 		key   string
 		value []byte
 	}
 	tests := []struct {
 		name    string
-		fields  fields
 		args    args
 		wantErr bool
 	}{
 		{
 			name: "simple key/value store",
-			fields: fields{
-				Table:         TestTableName,
-				AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
-				AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
-				AwsDisableSSL: DisableSSL,
-			},
 			args: args{
 				key:   "simple-key",
 				value: []byte("value"),
@@ -189,12 +81,6 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 		},
 		{
 			name: "empty key should error",
-			fields: fields{
-				Table:         TestTableName,
-				AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
-				AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
-				AwsDisableSSL: DisableSSL,
-			},
 			args: args{
 				key:   "",
 				value: []byte("value"),
@@ -204,26 +90,19 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Storage{
-				Table:         tt.fields.Table,
-				AwsSession:    tt.fields.AwsSession,
-				SkyDBEndpoint: tt.fields.AwsEndpoint,
-				AwsRegion:     tt.fields.AwsRegion,
-				AwsDisableSSL: tt.fields.AwsDisableSSL,
-			}
-			err := s.Store(tt.args.key, tt.args.value)
+			err = storage.Store(tt.args.key, tt.args.value)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Store() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if err == nil {
-				loaded, err := s.Load(tt.args.key)
+				loaded, err := storage.Load(tt.args.key)
 				if err != nil {
-					t.Errorf("failed to load after store: %s", err.Error())
+					t.Errorf("failed to load after store: %storage", err.Error())
 					return
 				}
 				if string(loaded) != string(tt.args.value) {
-					t.Errorf("Load() returned value other than expected. Expected: %s, Actual: %s", string(tt.args.value), string(loaded))
+					t.Errorf("Load() returned value other than expected. Expected: %storage, Actual: %storage", string(tt.args.value), string(loaded))
 					return
 				}
 			}
@@ -231,18 +110,11 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 	}
 }
 
-func TestDynamoDBStorage_List(t *testing.T) {
-	err := initDb()
+func TestSkyDBStorage_List(t *testing.T) {
+	storage, err := initTestStorage()
 	if err != nil {
 		t.Error(err)
 		return
-	}
-
-	storage := Storage{
-		Table:         TestTableName,
-		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
-		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
-		AwsDisableSSL: DisableSSL,
 	}
 
 	prefix := "domain"
@@ -296,18 +168,11 @@ func TestDynamoDBStorage_List(t *testing.T) {
 	}
 }
 
-func TestDynamoDBStorage_Stat(t *testing.T) {
-	err := initDb()
+func TestSkyDBStorage_Stat(t *testing.T) {
+	storage, err := initTestStorage()
 	if err != nil {
 		t.Error(err)
 		return
-	}
-
-	storage := Storage{
-		Table:         TestTableName,
-		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
-		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
-		AwsDisableSSL: DisableSSL,
 	}
 
 	err = storage.Store("key", []byte("value"))
@@ -336,18 +201,11 @@ func TestDynamoDBStorage_Stat(t *testing.T) {
 	}
 }
 
-func TestDynamoDBStorage_Delete(t *testing.T) {
-	err := initDb()
+func TestSkyDBStorage_Delete(t *testing.T) {
+	storage, err := initTestStorage()
 	if err != nil {
 		t.Error(err)
 		return
-	}
-
-	storage := Storage{
-		Table:         TestTableName,
-		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
-		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
-		AwsDisableSSL: DisableSSL,
 	}
 
 	err = storage.Store("key", []byte("value"))
@@ -377,25 +235,17 @@ func TestDynamoDBStorage_Delete(t *testing.T) {
 		t.Errorf("key still exists after delete")
 		return
 	}
-
 }
 
-func TestDynamoDBStorage_Lock(t *testing.T) {
-	err := initDb()
+func TestSkyDBStorage_Lock(t *testing.T) {
+	storage, err := initTestStorage()
 	if err != nil {
 		t.Error(err)
 		return
 	}
 
 	lockTimeout := 1 * time.Second
-
-	storage := Storage{
-		Table:         TestTableName,
-		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
-		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
-		AwsDisableSSL: DisableSSL,
-		LockTimeout:   caddy.Duration(lockTimeout),
-	}
+	storage.LockTimeout = caddy.Duration(lockTimeout)
 
 	// create lock
 	key := "test1"
@@ -411,7 +261,7 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 		t.Errorf("error creating lock second time: %s", err.Error())
 	}
 	if time.Since(before) < lockTimeout {
-		t.Errorf("creating second lock finished quicker than it shoud, in %v seconds", time.Since(before).Seconds())
+		t.Errorf("creating second lock finished quicker than it should, in %v seconds", time.Since(before).Seconds())
 	}
 
 	// try to unlock a key that doesn't exist
@@ -421,18 +271,11 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 	}
 }
 
-func TestDynamoDBStorage_LoadErrNotExist(t *testing.T) {
-	err := initDb()
+func TestSkyDBStorage_LoadErrNotExist(t *testing.T) {
+	storage, err := initTestStorage()
 	if err != nil {
 		t.Error(err)
 		return
-	}
-
-	storage := Storage{
-		Table:         TestTableName,
-		SkyDBEndpoint: os.Getenv("AWS_ENDPOINT"),
-		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
-		AwsDisableSSL: DisableSSL,
 	}
 
 	_, err = storage.Load("notarealkey")

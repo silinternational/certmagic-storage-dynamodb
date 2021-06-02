@@ -14,6 +14,13 @@ import (
 	"go.sia.tech/siad/types"
 )
 
+// SkyDBI is the interface for communicating with SkyDB. We use an interface, so
+// we can easily override it for testing purposes.
+type SkyDBI interface {
+	Read(crypto.Hash) ([]byte, uint64, error)
+	Write(data []byte, dataKey crypto.Hash, rev uint64) error
+}
+
 type SkyDB struct {
 	Client *client.Client
 	sk     crypto.SecretKey
@@ -37,11 +44,6 @@ func New() (*SkyDB, error) {
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to get default client options")
 	}
-	skydEndpoint := os.Getenv("SKYDB_ENDPOINT")
-	if skydEndpoint == "" {
-		return nil, errors.New("missing SKYDB_ENDPOINT environment variable")
-	}
-	opts.Address = skydEndpoint
 	skydb := &SkyDB{Client: &client.Client{opts}}
 	copy(skydb.sk[:], sk)
 	copy(skydb.pk[:], pk)

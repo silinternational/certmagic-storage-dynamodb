@@ -7,6 +7,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.0.0
 	github.com/caddyserver/certmagic v0.11.0
 	gitlab.com/NebulousLabs/errors v0.0.0-20200929122200-06c536cf6975
+	gitlab.com/NebulousLabs/fastrand v0.0.0-20181126182046-603482d69e40 // indirect
 	gitlab.com/SkynetLabs/skyd v1.5.7-0.20210526142136-ba215800db45
 	go.sia.tech/siad v1.5.7-0.20210420210148-0aa0d744a366
 )

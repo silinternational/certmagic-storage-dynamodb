@@ -1,20 +1,29 @@
 package skydbstorage
 
 import (
+	"encoding/base64"
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/certmagic"
 )
 
 func init() {
-	caddy.RegisterModule(Storage{}) // TODO Make this a constructor
+	storage, err := NewStorage() // TODO Handle error
+	if err != nil {
+		panic(err)
+	}
+	caddy.RegisterModule(storage)
 }
 
 // CaddyModule returns the Caddy module information.
 func (Storage) CaddyModule() caddy.ModuleInfo {
+	storage, err := NewStorage() // TODO Handle error
+	if err != nil {
+		panic(err)
+	}
 	return caddy.ModuleInfo{
 		ID:  "caddy.storage.skydb",
-		New: func() caddy.Module { return new(Storage) },
+		New: func() caddy.Module { return storage },
 	}
 }
 
@@ -25,31 +34,30 @@ func (s *Storage) CertMagicStorage() (certmagic.Storage, error) {
 
 // UnmarshalCaddyfile sets up the storage module from Caddyfile tokens. Syntax:
 //
-// TODO: This needs to be adapted to SkyDB
-// dynamodb <table_name> {
-//     aws_endpoint <endpoint>
-//     aws_region   <region>
+// skydb {
+// 		key_list_datakey <base64 encoded dataKey>
 // }
 //
-// skydb <base64_pubkey> {
-// 		skydb_endpoint <endpoint> TODO Do we even need this?
-// }
-//
-// Only the table name is required.
+// Optional. If not provided, the hardcoded key will be used.
 func (s *Storage) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	for d.Next() {
 		if !d.NextArg() {
 			return d.ArgErr()
 		}
-		s.Table = d.Val()
-
 		for nesting := d.Nesting(); d.NextBlock(nesting); {
 			switch d.Val() {
-			case "skydb_endpoint":
+			case "key_list_datakey":
 				if !d.NextArg() {
 					return d.ArgErr()
 				}
-				s.SkyDBEndpoint = d.Val()
+				dk, err := base64.StdEncoding.DecodeString(d.Val())
+				if err != nil {
+					return d.Errf("failed to decode key list dataKey. Error: %v", err)
+				}
+				if len(dk) != len(s.KeyListDataKey) {
+					return d.Errf("bad size of key list dataKey. Expected %d, got %d.", len(s.KeyListDataKey), len(dk))
+				}
+				copy(s.KeyListDataKey[:], dk)
 			default:
 				return d.Errf("unrecognized parameter '%s'", d.Val())
 			}
