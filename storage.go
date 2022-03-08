@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"time"
 
@@ -77,7 +78,7 @@ func (s *Storage) initConfig() error {
 }
 
 // Store puts value at key.
-func (s *Storage) Store(key string, value []byte) error {
+func (s *Storage) Store(_ context.Context, key string, value []byte) error {
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -109,7 +110,7 @@ func (s *Storage) Store(key string, value []byte) error {
 }
 
 // Load retrieves the value at key.
-func (s *Storage) Load(key string) ([]byte, error) {
+func (s *Storage) Load(_ context.Context, key string) ([]byte, error) {
 	if err := s.initConfig(); err != nil {
 		return []byte{}, err
 	}
@@ -123,7 +124,7 @@ func (s *Storage) Load(key string) ([]byte, error) {
 }
 
 // Delete deletes key.
-func (s *Storage) Delete(key string) error {
+func (s *Storage) Delete(_ context.Context, key string) error {
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -152,7 +153,7 @@ func (s *Storage) Delete(key string) error {
 
 // Exists returns true if the key exists
 // and there was no error checking.
-func (s *Storage) Exists(key string) bool {
+func (s *Storage) Exists(_ context.Context, key string) bool {
 
 	cert, err := s.Load(key)
 	if string(cert) != "" && err == nil {
@@ -167,7 +168,7 @@ func (s *Storage) Exists(key string) bool {
 // will be enumerated (i.e. "directories"
 // should be walked); otherwise, only keys
 // prefixed exactly by prefix will be listed.
-func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
+func (s *Storage) List(_ context.Context, prefix string, recursive bool) ([]string, error) {
 	if err := s.initConfig(); err != nil {
 		return []string{}, err
 	}
@@ -219,7 +220,7 @@ func (s *Storage) List(prefix string, recursive bool) ([]string, error) {
 }
 
 // Stat returns information about key.
-func (s *Storage) Stat(key string) (certmagic.KeyInfo, error) {
+func (s *Storage) Stat(_ context.Context, key string) (certmagic.KeyInfo, error) {
 
 	domainItem, err := s.getItem(key)
 	if err != nil {
@@ -261,7 +262,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 	// Check for existing lock
 	for {
 		existing, err := s.getItem(lockKey)
-		_, isErrNotExists := err.(certmagic.ErrNotExist)
+		isErrNotExists := errors.Is(err, fs.ErrNotExist)
 		if err != nil && !isErrNotExists {
 			return err
 		}
@@ -299,7 +300,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 // called after a successful call to Lock, and only after the
 // critical section is finished, even if it errored or timed
 // out. Unlock cleans up any resources allocated during Lock.
-func (s *Storage) Unlock(key string) error {
+func (s *Storage) Unlock(_ context.Context, key string) error {
 	if err := s.initConfig(); err != nil {
 		return err
 	}
@@ -332,7 +333,7 @@ func (s *Storage) getItem(key string) (Item, error) {
 		return Item{}, err
 	}
 	if domainItem.Contents == "" {
-		return Item{}, certmagic.ErrNotExist(fmt.Errorf("key %s doesn't exist", key))
+		return Item{}, fs.ErrNotExist
 	}
 
 	dec, err := base64.StdEncoding.DecodeString(domainItem.Contents)
