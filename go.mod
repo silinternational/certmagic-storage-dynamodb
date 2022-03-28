@@ -5,14 +5,19 @@ go 1.13
 require (
 	github.com/GeertJohan/go.rice v1.0.0 // indirect
 	github.com/alangpierce/go-forceexport v0.0.0-20160317203124-8f1d6941cd75 // indirect
+	github.com/alecthomas/assert v0.0.0-20170929043011-405dbfeb8e38 // indirect
+	github.com/alecthomas/colour v0.0.0-20160524082231-60882d9e2721 // indirect
+	github.com/alecthomas/kong v0.2.4 // indirect
 	github.com/alecthomas/kong-hcl v0.1.8-0.20190615233001-b21fea9723c8 // indirect
+	github.com/alecthomas/repr v0.0.0-20180818092828-117648cd9897 // indirect
 	github.com/aliyun/aliyun-oss-go-sdk v0.0.0-20190307165228-86c17b95fcd5 // indirect
 	github.com/aws/aws-sdk-go v1.43.26
 	github.com/baiyubin/aliyun-sts-go-sdk v0.0.0-20180326062324-cfa1a18b161f // indirect
-	github.com/caddyserver/caddy/v2 v2.4.6
+	github.com/caddyserver/caddy/v2 v2.5.0-beta.1.0.20220325185629-b4f1a713978f
 	github.com/caddyserver/certmagic v0.16.0
 	github.com/coreos/bbolt v1.3.3 // indirect
 	github.com/coreos/etcd v3.3.18+incompatible // indirect
+	github.com/danwakefield/fnmatch v0.0.0-20160403171240-cbb64ac3d964 // indirect
 	github.com/go-acme/lego/v3 v3.7.0 // indirect
 	github.com/go-ini/ini v1.44.0 // indirect
 	github.com/golangci/go-tools v0.0.0-20190318055746-e32c54105b7c // indirect
@@ -27,12 +32,15 @@ require (
 	github.com/gostaticanalysis/analysisutil v0.0.3 // indirect
 	github.com/hashicorp/golang-lru v0.5.3 // indirect
 	github.com/jsternberg/zap-logfmt v1.2.0 // indirect
+	github.com/juju/ansiterm v0.0.0-20180109212912-720a0952cc2a // indirect
 	github.com/klauspost/cpuid v1.2.3 // indirect
 	github.com/klauspost/cpuid/v2 v2.0.12 // indirect
 	github.com/letsencrypt/pkcs11key v2.0.1-0.20170608213348-396559074696+incompatible // indirect
 	github.com/marten-seemann/qtls v0.9.0 // indirect
+	github.com/marten-seemann/qtls-go1-15 v0.1.4 // indirect
 	github.com/mattn/go-sqlite3 v1.10.0 // indirect
 	github.com/miekg/dns v1.1.47 // indirect
+	github.com/onsi/ginkgo v1.16.5 // indirect
 	github.com/pelletier/go-toml v1.6.0 // indirect
 	github.com/prometheus/client_golang v1.12.1 // indirect
 	github.com/satori/go.uuid v1.2.0 // indirect
@@ -50,7 +58,6 @@ require (
 	google.golang.org/protobuf v1.28.0 // indirect
 	gopkg.in/airbrake/gobrake.v2 v2.0.9 // indirect
 	gopkg.in/gemnasium/logrus-airbrake-hook.v2 v2.1.2 // indirect
-	howett.net/plist v0.0.0-20200225050739-77e249a2e2ba // indirect
 	mvdan.cc/unparam v0.0.0-20191111180625-960b1ec0f2c2 // indirect
 	sourcegraph.com/sqs/pbtypes v1.0.0 // indirect
 )
