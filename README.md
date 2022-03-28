@@ -33,7 +33,7 @@ package whatever
 import (
     "github.com/caddyserver/certmagic"
 
-    dynamodbstore "github.com/silinternational/certmagic-storage-dynamodb/v2"
+    dynamodbstore "github.com/silinternational/certmagic-storage-dynamodb/v3"
 )
 
 // ...
@@ -88,7 +88,7 @@ Please do, we like reported issues and pull requests.
 ## License
 MIT License
 
-Copyright (c) 2020 SIL International
+Copyright (c) 2022 SIL International
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

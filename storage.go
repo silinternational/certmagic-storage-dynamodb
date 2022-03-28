@@ -168,9 +168,9 @@ func (s *Storage) Delete(_ context.Context, key string) error {
 
 // Exists returns true if the key exists
 // and there was no error checking.
-func (s *Storage) Exists(_ context.Context, key string) bool {
+func (s *Storage) Exists(ctx context.Context, key string) bool {
 
-	cert, err := s.Load(key)
+	cert, err := s.Load(ctx, key)
 	if string(cert) != "" && err == nil {
 		return true
 	}
@@ -293,7 +293,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 			return err
 		}
 		if time.Now().After(expires) {
-			if err := s.Unlock(key); err != nil {
+			if err := s.Unlock(ctx, key); err != nil {
 				return err
 			}
 			break
@@ -308,21 +308,21 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 
 	// lock doesn't exist, create it
 	contents := []byte(time.Now().Add(time.Duration(s.LockTimeout)).Format(time.RFC3339))
-	return s.Store(lockKey, contents)
+	return s.Store(ctx, lockKey, contents)
 }
 
 // Unlock releases the lock for key. This method must ONLY be
 // called after a successful call to Lock, and only after the
 // critical section is finished, even if it errored or timed
 // out. Unlock cleans up any resources allocated during Lock.
-func (s *Storage) Unlock(_ context.Context, key string) error {
+func (s *Storage) Unlock(ctx context.Context, key string) error {
 	if err := s.initConfig(); err != nil {
 		return err
 	}
 
 	lockKey := fmt.Sprintf("LOCK-%s", key)
 
-	return s.Delete(lockKey)
+	return s.Delete(ctx, lockKey)
 }
 
 func (s *Storage) getItem(key string) (Item, error) {
