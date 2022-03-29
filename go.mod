@@ -1,6 +1,6 @@
 module github.com/silinternational/certmagic-storage-dynamodb/v3
 
-go 1.13
+go 1.17
 
 require (
 	github.com/GeertJohan/go.rice v1.0.0 // indirect
