@@ -2,7 +2,7 @@ checks:
   go: true
 build:
   environment:
-    go: go1.14
+    go: go1.18
     variables:
       GO_ENV: test
       AWS_ENDPOINT: localhost:8000
