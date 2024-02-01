@@ -38,7 +38,7 @@ import (
 
 // ...
 
-certmagic.Default.Storage = &dynamodbstore.DynamoDBStorage{
+certmagic.Default.Storage = &dynamodbstore.Storage{
     Table:               "CertMagic",
     LockTimeout:         2 * time.Minute, // optional: default is 5 minutes
     LockPollingInterval: 2 * time.Second, // optional: default is 5 seconds
