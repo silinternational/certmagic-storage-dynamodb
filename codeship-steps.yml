@@ -1,3 +1,0 @@
-- name: test
-  service: test
-  command: make test
