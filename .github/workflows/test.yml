@@ -11,4 +11,4 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run tests
-        run: docker-compose run test bash -c "make test"
+        run: docker compose run test bash -c "make test"
