@@ -9,12 +9,13 @@ import (
 	"log"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 
-	caddy "github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/certmagic"
 )
 
@@ -40,8 +41,8 @@ type Item struct {
 // and unlocking of cert data during storage
 type Storage struct {
 	// Table - [required] DynamoDB table name
-	Table      string           `json:"table,omitempty"`
-	AwsSession *session.Session `json:"-"`
+	Table  string           `json:"table,omitempty"`
+	Client *dynamodb.Client `json:"-"`
 
 	// AwsEndpoint - [optional] provide an override for DynamoDB service.
 	// By default it'll use the standard production DynamoDB endpoints.
@@ -63,8 +64,8 @@ type Storage struct {
 	LockPollingInterval caddy.Duration `json:"lock_polling_interval,omitempty"`
 }
 
-// initConfig initializes configuration for table name and AWS session
-func (s *Storage) initConfig() error {
+// initConfig initializes configuration for table name and AWS client
+func (s *Storage) initConfig(ctx context.Context) error {
 	if s.Table == "" {
 		return errors.New("config error: table name is required")
 	}
@@ -76,25 +77,27 @@ func (s *Storage) initConfig() error {
 		s.LockPollingInterval = lockPollingInterval
 	}
 
-	// Initialize AWS Session if needed
-	if s.AwsSession == nil {
-		var err error
-		s.AwsSession, err = session.NewSession(&aws.Config{
-			Endpoint:   &s.AwsEndpoint,
-			Region:     &s.AwsRegion,
-			DisableSSL: &s.AwsDisableSSL,
-		})
+	// Initialize AWS Client if needed
+	if s.Client == nil {
+		cfg, err := config.LoadDefaultConfig(
+			ctx,
+			config.WithRegion(s.AwsRegion),
+			config.WithBaseEndpoint(s.AwsEndpoint),
+		)
 		if err != nil {
 			return err
 		}
-	}
 
+		s.Client = dynamodb.NewFromConfig(cfg, func(o *dynamodb.Options) {
+			o.EndpointOptions.DisableHTTPS = s.AwsDisableSSL
+		})
+	}
 	return nil
 }
 
 // Store puts value at key.
-func (s *Storage) Store(_ context.Context, key string, value []byte) error {
-	if err := s.initConfig(); err != nil {
+func (s *Storage) Store(ctx context.Context, key string, value []byte) error {
+	if err := s.initConfig(ctx); err != nil {
 		return err
 	}
 
@@ -104,29 +107,28 @@ func (s *Storage) Store(_ context.Context, key string, value []byte) error {
 		return errors.New("key must not be empty")
 	}
 
-	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.PutItemInput{
-		Item: map[string]*dynamodb.AttributeValue{
-			primaryKeyAttribute: {
-				S: aws.String(key),
+		Item: map[string]types.AttributeValue{
+			primaryKeyAttribute: &types.AttributeValueMemberS{
+				Value: key,
 			},
-			contentsAttribute: {
-				S: aws.String(encVal),
+			contentsAttribute: &types.AttributeValueMemberS{
+				Value: encVal,
 			},
-			lastUpdatedAttribute: {
-				S: aws.String(time.Now().Format(time.RFC3339)),
+			lastUpdatedAttribute: &types.AttributeValueMemberS{
+				Value: time.Now().Format(time.RFC3339),
 			},
 		},
 		TableName: aws.String(s.Table),
 	}
 
-	_, err := svc.PutItem(input)
+	_, err := s.Client.PutItem(ctx, input)
 	return err
 }
 
 // Load retrieves the value at key.
-func (s *Storage) Load(_ context.Context, key string) ([]byte, error) {
-	if err := s.initConfig(); err != nil {
+func (s *Storage) Load(ctx context.Context, key string) ([]byte, error) {
+	if err := s.initConfig(ctx); err != nil {
 		return []byte{}, err
 	}
 
@@ -134,13 +136,13 @@ func (s *Storage) Load(_ context.Context, key string) ([]byte, error) {
 		return []byte{}, errors.New("key must not be empty")
 	}
 
-	domainItem, err := s.getItem(key)
+	domainItem, err := s.getItem(ctx, key)
 	return []byte(domainItem.Contents), err
 }
 
 // Delete deletes key.
-func (s *Storage) Delete(_ context.Context, key string) error {
-	if err := s.initConfig(); err != nil {
+func (s *Storage) Delete(ctx context.Context, key string) error {
+	if err := s.initConfig(ctx); err != nil {
 		return err
 	}
 
@@ -148,17 +150,16 @@ func (s *Storage) Delete(_ context.Context, key string) error {
 		return errors.New("key must not be empty")
 	}
 
-	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.DeleteItemInput{
-		Key: map[string]*dynamodb.AttributeValue{
-			primaryKeyAttribute: {
-				S: aws.String(key),
+		Key: map[string]types.AttributeValue{
+			primaryKeyAttribute: &types.AttributeValueMemberS{
+				Value: key,
 			},
 		},
 		TableName: aws.String(s.Table),
 	}
 
-	_, err := svc.DeleteItem(input)
+	_, err := s.Client.DeleteItem(ctx, input)
 	if err != nil {
 		return err
 	}
@@ -169,7 +170,6 @@ func (s *Storage) Delete(_ context.Context, key string) error {
 // Exists returns true if the key exists
 // and there was no error checking.
 func (s *Storage) Exists(ctx context.Context, key string) bool {
-
 	cert, err := s.Load(ctx, key)
 	if string(cert) != "" && err == nil {
 		return true
@@ -183,8 +183,8 @@ func (s *Storage) Exists(ctx context.Context, key string) bool {
 // will be enumerated (i.e. "directories"
 // should be walked); otherwise, only keys
 // prefixed exactly by prefix will be listed.
-func (s *Storage) List(_ context.Context, prefix string, recursive bool) ([]string, error) {
-	if err := s.initConfig(); err != nil {
+func (s *Storage) List(ctx context.Context, prefix string, recursive bool) ([]string, error) {
+	if err := s.initConfig(ctx); err != nil {
 		return []string{}, err
 	}
 
@@ -192,14 +192,13 @@ func (s *Storage) List(_ context.Context, prefix string, recursive bool) ([]stri
 		return []string{}, errors.New("key prefix must not be empty")
 	}
 
-	svc := dynamodb.New(s.AwsSession)
 	input := &dynamodb.ScanInput{
-		ExpressionAttributeNames: map[string]*string{
-			"#D": aws.String(primaryKeyAttribute),
+		ExpressionAttributeNames: map[string]string{
+			"#D": primaryKeyAttribute,
 		},
-		ExpressionAttributeValues: map[string]*dynamodb.AttributeValue{
-			":p": {
-				S: aws.String(prefix),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":p": &types.AttributeValueMemberS{
+				Value: prefix,
 			},
 		},
 		FilterExpression: aws.String("begins_with(#D, :p)"),
@@ -208,36 +207,32 @@ func (s *Storage) List(_ context.Context, prefix string, recursive bool) ([]stri
 	}
 
 	var matchingKeys []string
-	pageNum := 0
-	err := svc.ScanPages(input,
-		func(page *dynamodb.ScanOutput, lastPage bool) bool {
-			pageNum++
 
-			var items []Item
-			err := dynamodbattribute.UnmarshalListOfMaps(page.Items, &items)
-			if err != nil {
-				log.Printf("error unmarshaling page of items: %s", err.Error())
-				return false
-			}
+	paginator := dynamodb.NewScanPaginator(s.Client, input)
+	for paginator.HasMorePages() {
+		page, err := paginator.NextPage(ctx)
+		if err != nil {
+			log.Fatalf("failed to retrieve page, %v", err)
+		}
 
-			for _, i := range items {
-				matchingKeys = append(matchingKeys, i.PrimaryKey)
-			}
+		var pageItems []Item
+		err = attributevalue.UnmarshalListOfMaps(page.Items, &pageItems)
+		if err != nil {
+			log.Printf("error unmarshalling page of items: %s", err.Error())
+			return nil, err
+		}
 
-			return !lastPage
-		})
-
-	if err != nil {
-		return []string{}, err
+		for i := range pageItems {
+			matchingKeys = append(matchingKeys, pageItems[i].PrimaryKey)
+		}
 	}
 
 	return matchingKeys, nil
 }
 
 // Stat returns information about key.
-func (s *Storage) Stat(_ context.Context, key string) (certmagic.KeyInfo, error) {
-
-	domainItem, err := s.getItem(key)
+func (s *Storage) Stat(ctx context.Context, key string) (certmagic.KeyInfo, error) {
+	domainItem, err := s.getItem(ctx, key)
 	if err != nil {
 		return certmagic.KeyInfo{}, err
 	}
@@ -268,7 +263,7 @@ func (s *Storage) Stat(_ context.Context, key string) (certmagic.KeyInfo, error)
 // case Unlock is unable to be called due to some sort of network
 // failure or system crash.
 func (s *Storage) Lock(ctx context.Context, key string) error {
-	if err := s.initConfig(); err != nil {
+	if err := s.initConfig(ctx); err != nil {
 		return err
 	}
 
@@ -276,7 +271,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 
 	// Check for existing lock
 	for {
-		existing, err := s.getItem(lockKey)
+		existing, err := s.getItem(ctx, lockKey)
 		isErrNotExists := errors.Is(err, fs.ErrNotExist)
 		if err != nil && !isErrNotExists {
 			return err
@@ -316,7 +311,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 // critical section is finished, even if it errored or timed
 // out. Unlock cleans up any resources allocated during Lock.
 func (s *Storage) Unlock(ctx context.Context, key string) error {
-	if err := s.initConfig(); err != nil {
+	if err := s.initConfig(ctx); err != nil {
 		return err
 	}
 
@@ -325,25 +320,24 @@ func (s *Storage) Unlock(ctx context.Context, key string) error {
 	return s.Delete(ctx, lockKey)
 }
 
-func (s *Storage) getItem(key string) (Item, error) {
-	svc := dynamodb.New(s.AwsSession)
+func (s *Storage) getItem(ctx context.Context, key string) (Item, error) {
 	input := &dynamodb.GetItemInput{
-		Key: map[string]*dynamodb.AttributeValue{
-			primaryKeyAttribute: {
-				S: aws.String(key),
+		Key: map[string]types.AttributeValue{
+			primaryKeyAttribute: &types.AttributeValueMemberS{
+				Value: key,
 			},
 		},
 		TableName:      aws.String(s.Table),
 		ConsistentRead: aws.Bool(true),
 	}
 
-	result, err := svc.GetItem(input)
+	result, err := s.Client.GetItem(ctx, input)
 	if err != nil {
 		return Item{}, err
 	}
 
 	var domainItem Item
-	err = dynamodbattribute.UnmarshalMap(result.Item, &domainItem)
+	err = attributevalue.UnmarshalMap(result.Item, &domainItem)
 	if err != nil {
 		return Item{}, err
 	}

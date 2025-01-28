@@ -9,15 +9,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/caddyserver/caddy/v2"
 )
 
-const TestTableName = "CertMagicTest"
-const DisableSSL = true
+const (
+	TestTableName = "CertMagicTest"
+	DisableSSL    = true
+)
 
 func initDb() error {
 	storage := Storage{
@@ -26,75 +27,47 @@ func initDb() error {
 		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
 		AwsDisableSSL: true,
 	}
-	sess, err := session.NewSession(&aws.Config{
-		Endpoint:   &storage.AwsEndpoint,
-		Region:     &storage.AwsRegion,
-		DisableSSL: &storage.AwsDisableSSL,
-	})
-	if err != nil {
+
+	ctx := context.Background()
+	if err := storage.initConfig(ctx); err != nil {
 		return err
 	}
-
-	svc := dynamodb.New(sess)
 
 	// attempt to delete table in case already exists
 	deleteTable := &dynamodb.DeleteTableInput{
 		TableName: aws.String(storage.Table),
 	}
-	_, err = svc.DeleteTable(deleteTable)
-	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case dynamodb.ErrCodeResourceNotFoundException:
-				// this is fine
-			default:
-				return aerr
-			}
-		} else {
-			return err
-		}
-	}
+	_, _ = storage.Client.DeleteTable(ctx, deleteTable)
 
 	// create table
 	createTable := &dynamodb.CreateTableInput{
-		AttributeDefinitions: []*dynamodb.AttributeDefinition{
+		AttributeDefinitions: []types.AttributeDefinition{
 			{
 				AttributeName: aws.String("PrimaryKey"),
-				AttributeType: aws.String("S"),
+				AttributeType: types.ScalarAttributeTypeS,
 			},
 		},
-		KeySchema: []*dynamodb.KeySchemaElement{
+		KeySchema: []types.KeySchemaElement{
 			{
 				AttributeName: aws.String("PrimaryKey"),
-				KeyType:       aws.String("HASH"),
+				KeyType:       types.KeyTypeHash,
 			},
 		},
-		ProvisionedThroughput: &dynamodb.ProvisionedThroughput{
+		ProvisionedThroughput: &types.ProvisionedThroughput{
 			ReadCapacityUnits:  aws.Int64(3),
 			WriteCapacityUnits: aws.Int64(3),
 		},
 		TableName: aws.String(storage.Table),
 	}
-	_, err = svc.CreateTable(createTable)
+	_, err := storage.Client.CreateTable(ctx, createTable)
 	return err
 }
 
 func TestDynamoDBStorage_initConfg(t *testing.T) {
-	defaultAwsSession, err := session.NewSession(&aws.Config{
-		Endpoint:   aws.String(""),
-		Region:     aws.String(""),
-		DisableSSL: aws.Bool(DisableSSL),
-	})
-	if err != nil {
-		t.Error(err)
-		return
-	}
-
 	type fields struct {
 		Table         string
 		KeyPrefix     string
 		ColumnName    string
-		AwsSession    *session.Session
 		AwsEndpoint   string
 		AwsRegion     string
 		AwsDisableSSL bool
@@ -119,7 +92,6 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 			wantErr: false,
 			expected: &Storage{
 				Table:               "Testing123",
-				AwsSession:          defaultAwsSession,
 				LockTimeout:         lockTimeoutMinutes,
 				LockPollingInterval: lockPollingInterval,
 			},
@@ -129,20 +101,18 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Storage{
 				Table:         tt.fields.Table,
-				AwsSession:    tt.fields.AwsSession,
 				AwsEndpoint:   tt.fields.AwsEndpoint,
 				AwsRegion:     tt.fields.AwsRegion,
 				AwsDisableSSL: tt.fields.AwsDisableSSL,
 			}
-			if err := s.initConfig(); (err != nil) != tt.wantErr {
+			if err := s.initConfig(context.Background()); (err != nil) != tt.wantErr {
 				t.Errorf("initConfig() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			// unset AwsSession since it is too complicated for reflection testing
-			s.AwsSession = tt.expected.AwsSession
+			// unset client since it is too complicated for reflection testing
+			s.Client = nil
 			if !reflect.DeepEqual(tt.expected, s) {
-				t.Errorf("Expected does not match actual: %+v != %+v. \nAwsSession \n\texpected: %+v, \n\tactual: %+v",
-					tt.expected, s, tt.expected.AwsSession, s.AwsSession)
+				t.Errorf("Expected does not match actual: %+v != %+v.", tt.expected, s)
 			}
 		})
 	}
@@ -159,7 +129,6 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 		Table         string
 		KeyPrefix     string
 		ColumnName    string
-		AwsSession    *session.Session
 		AwsEndpoint   string
 		AwsRegion     string
 		AwsDisableSSL bool
@@ -207,7 +176,6 @@ func TestDynamoDBStorage_Store(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &Storage{
 				Table:         tt.fields.Table,
-				AwsSession:    tt.fields.AwsSession,
 				AwsEndpoint:   tt.fields.AwsEndpoint,
 				AwsRegion:     tt.fields.AwsRegion,
 				AwsDisableSSL: tt.fields.AwsDisableSSL,
@@ -378,7 +346,6 @@ func TestDynamoDBStorage_Delete(t *testing.T) {
 		t.Errorf("key still exists after delete")
 		return
 	}
-
 }
 
 func TestDynamoDBStorage_Lock(t *testing.T) {

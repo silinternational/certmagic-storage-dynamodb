@@ -22,7 +22,7 @@ detect your AWS credentials in multiple ways, in the following order:
 3. Shared Configuration file (if SharedConfig is enabled)
 4. EC2 Instance Metadata (credentials only)
 
-For more information about authentication see https://docs.aws.amazon.com/sdk-for-go/api/aws/session/.
+For more information about authentication see https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/welcome.html.
 
 ## Usage
 ```go
@@ -51,7 +51,7 @@ so you can look there for examples.
 
 ## Testing locally
 You can build and run the tests for this package locally so long as you have Docker and Docker Compose
-available. Just run `docker-compose run test`. You could also run the DynamoDB local service separately 
+available. Just run `docker compose run test`. You could also run the DynamoDB local service separately 
 and just run the tests from your local system, just be sure to adjust the `AWS_ENDPOINT` environment 
 variable to point to where you have `dynamodb-local` running. 
 
