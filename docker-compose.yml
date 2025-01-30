@@ -9,8 +9,8 @@ services:
     volumes:
     - ./:/certmagic-storage-dynamodb
     environment:
-      AWS_ENDPOINT: dynamo:8000
-      AWS_DEFAULT_REGION: us-east-1
+      AWS_ENDPOINT: http://dynamo:8000
+      AWS_DEFAULT_REGION: local
       AWS_ACCESS_KEY_ID: abc123
       AWS_SECRET_ACCESS_KEY: abc123
     depends_on:
