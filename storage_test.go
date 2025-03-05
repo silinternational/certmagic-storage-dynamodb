@@ -112,7 +112,7 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 			}
 			// unset client since it is too complicated for reflection testing
 			s.Client = nil
-			// unset locks since it is a pointer and will always be different
+			// unset locks since sync.Map is not comparable
 			s.locks = nil
 			if !reflect.DeepEqual(tt.expected, s) {
 				t.Errorf("Expected does not match actual: %+v != %+v.", tt.expected, s)
