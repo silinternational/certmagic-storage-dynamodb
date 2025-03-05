@@ -413,7 +413,8 @@ func (s *Storage) Unlock(ctx context.Context, key string) error {
 
 	handle, ok := s.locks.LoadAndDelete(key)
 	if !ok {
-		return fmt.Errorf("no lock handle found for key: %s", key)
+		// this line is not reached in normal operation, but it's here for safety
+		return nil
 	}
 	lockHandle, _ := handle.(*LockHandle)
 
@@ -437,8 +438,10 @@ func (s *Storage) Unlock(ctx context.Context, key string) error {
 	if err != nil {
 		var ccfe *types.ConditionalCheckFailedException
 		if errors.As(err, &ccfe) {
-			// Lock already deleted or updated by another process
-			return fmt.Errorf("failed to unlock: lock may have been deleted or updated by another process")
+			// Lock already deleted or updated by another process, so this process is not the owner anymore.
+			// This should not be considered an error according to the `Unlock` interface definition.
+			// ref. https://github.com/caddyserver/certmagic/blob/2134b61d5db3cf61d9255725219ab6591541c19f/storage.go#L147-L148
+			return nil
 		}
 		return err
 	}
