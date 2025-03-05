@@ -395,9 +395,17 @@ func (s *Storage) updateLockExpiration(ctx context.Context, handle *LockHandle) 
 		}
 
 		// Retry in case of network error or other transient issues
-		time.Sleep(1 * time.Second)
+		timer := time.NewTimer(1 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			continue
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
-	return fmt.Errorf("failed to update lock expiration after retries: %w", err)
+
+	return fmt.Errorf("failed to update lock expiration: all retries exhausted: %v", err)
 }
 
 // Unlock releases the lock for key. This method must ONLY be
