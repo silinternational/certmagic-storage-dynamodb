@@ -349,7 +349,9 @@ func (s *Storage) keepLockFresh(ctx context.Context, handle *LockHandle) {
 	for {
 		select {
 		case <-ticker.C:
-			if err := s.updateLockExpiration(ctx, handle); err != nil {
+			timeout := time.Duration(s.LockRefreshInterval) / 2
+			err := s.updateLockExpiration(ctx, handle, timeout)
+			if err != nil {
 				// The critical section should be aborted if lock refresh fails.
 				// However, there is no way to notify the critical section to abort,
 				// so we just log the error and stop refreshing the lock.
@@ -363,7 +365,7 @@ func (s *Storage) keepLockFresh(ctx context.Context, handle *LockHandle) {
 }
 
 // updateLockExpiration updates the lock expiration atomically.
-func (s *Storage) updateLockExpiration(ctx context.Context, handle *LockHandle) error {
+func (s *Storage) updateLockExpiration(ctx context.Context, handle *LockHandle, timeout time.Duration) error {
 	lockKey := fmt.Sprintf("LOCK-%s", handle.Key)
 	newExpiresAt := time.Now().Add(time.Duration(s.LockTimeout)).Unix()
 
@@ -381,31 +383,33 @@ func (s *Storage) updateLockExpiration(ctx context.Context, handle *LockHandle) 
 		},
 	}
 
-	var err error
-	for range 3 { // Simple retry logic (up to 3 times)
-		_, err = s.Client.UpdateItem(ctx, input)
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	for {
+		_, err := s.Client.UpdateItem(ctx, input)
 		if err == nil {
-			return nil // Update successful
+			return nil
 		}
 
+		// Do not retry if lock deleted or acquired by another process
 		var ccfe *types.ConditionalCheckFailedException
 		if errors.As(err, &ccfe) {
-			// Do not retry if lock deleted or acquired by another process
 			return fmt.Errorf("failed to update lock expiration: lock may have been deleted or updated by another process")
 		}
 
 		// Retry in case of network error or other transient issues
-		timer := time.NewTimer(1 * time.Second)
-		defer timer.Stop()
+		delay := min(timeout/10, time.Second) // delay should be smaller enough than timeout
+		delayTimer := time.NewTimer(delay)
+		defer delayTimer.Stop()
 		select {
-		case <-timer.C:
+		case <-delayTimer.C:
 			continue
+		case <-timeoutTimer.C:
+			return fmt.Errorf("failed to update lock expiration: timeout")
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil
 		}
 	}
-
-	return fmt.Errorf("failed to update lock expiration: all retries exhausted: %v", err)
 }
 
 // Unlock releases the lock for key. This method must ONLY be
