@@ -94,6 +94,7 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 				Table:               "Testing123",
 				LockTimeout:         lockTimeoutMinutes,
 				LockPollingInterval: lockPollingInterval,
+				LockRefreshInterval: lockTimeoutMinutes / 3,
 			},
 		},
 	}
@@ -111,6 +112,8 @@ func TestDynamoDBStorage_initConfg(t *testing.T) {
 			}
 			// unset client since it is too complicated for reflection testing
 			s.Client = nil
+			// unset locks since it is a pointer and will always be different
+			s.locks = nil
 			if !reflect.DeepEqual(tt.expected, s) {
 				t.Errorf("Expected does not match actual: %+v != %+v.", tt.expected, s)
 			}
@@ -348,7 +351,124 @@ func TestDynamoDBStorage_Delete(t *testing.T) {
 	}
 }
 
-func TestDynamoDBStorage_Lock(t *testing.T) {
+func TestDynamoDBStorage_LockConsistency(t *testing.T) {
+	err := initDb()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	lockTimeout := 3 * time.Second
+	lockPollingInterval := time.Second / 2 // should be less than lockTimeout
+	lockRefreshInterval := 1 * time.Second // should be less than lockTimeout
+
+	storage1 := Storage{
+		Table:               TestTableName,
+		AwsEndpoint:         os.Getenv("AWS_ENDPOINT"),
+		AwsRegion:           os.Getenv("AWS_DEFAULT_REGION"),
+		AwsDisableSSL:       DisableSSL,
+		LockTimeout:         caddy.Duration(lockTimeout),
+		LockPollingInterval: caddy.Duration(lockPollingInterval),
+		LockRefreshInterval: caddy.Duration(lockRefreshInterval),
+	}
+	storage2 := Storage{
+		Table:               TestTableName,
+		AwsEndpoint:         os.Getenv("AWS_ENDPOINT"),
+		AwsRegion:           os.Getenv("AWS_DEFAULT_REGION"),
+		AwsDisableSSL:       DisableSSL,
+		LockTimeout:         caddy.Duration(lockTimeout),
+		LockPollingInterval: caddy.Duration(lockPollingInterval),
+		LockRefreshInterval: caddy.Duration(lockRefreshInterval),
+	}
+
+	key := "test1"
+
+	// create lock with first instance
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	err = storage1.Lock(ctx1, key)
+	if err != nil {
+		t.Errorf("error creating lock: %s", err.Error())
+	}
+
+	// try to create lock again with another instance,
+	// but it should not be able to create lock until the first lock is released.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	err = storage2.Lock(ctx2, key) // this call should be cancelled after 2 seconds
+	if err == nil {
+		t.Errorf("another instance was able to create lock while it should not be able to until the first lock is released")
+	}
+
+	// release the lock
+	err = storage1.Unlock(ctx1, key)
+	if err != nil {
+		t.Errorf("error releasing lock: %s", err.Error())
+	}
+
+	// try to create lock again with another instance, it should be able to create lock now
+	ctx2, cancel2 = context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	err = storage2.Lock(ctx2, key)
+	if err != nil {
+		t.Errorf("error creating lock second time: %s", err.Error())
+	}
+}
+
+func TestDynamoDBStorage_StaleLock(t *testing.T) {
+	err := initDb()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	lockTimeout := 1 * time.Second
+
+	storage1 := Storage{
+		Table:         TestTableName,
+		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
+		AwsDisableSSL: DisableSSL,
+		LockTimeout:   caddy.Duration(lockTimeout),
+	}
+	storage2 := Storage{
+		Table:         TestTableName,
+		AwsEndpoint:   os.Getenv("AWS_ENDPOINT"),
+		AwsRegion:     os.Getenv("AWS_DEFAULT_REGION"),
+		AwsDisableSSL: DisableSSL,
+		LockTimeout:   caddy.Duration(lockTimeout),
+	}
+
+	key := "test1"
+
+	// create lock
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
+	err = storage1.Lock(ctx1, key)
+	if err != nil {
+		t.Errorf("error creating lock: %s", err.Error())
+	}
+
+	// emulate the first instance killed before unlocking by cancelling the context
+	// to stop refreshing the lock.
+	cancel1()
+
+	before := time.Now()
+
+	// try to create lock again with another instance,
+	// it should take about 1-2 seconds to return
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	err = storage2.Lock(ctx2, key)
+	if err != nil {
+		t.Errorf("error creating lock second time: %s", err.Error())
+	}
+	if time.Since(before) < lockTimeout {
+		t.Errorf("creating second lock finished quicker than it shoud, in %v seconds", time.Since(before).Seconds())
+	}
+}
+
+func TestDynamoDBStorage_UnlockNonExistantKey(t *testing.T) {
 	err := initDb()
 	if err != nil {
 		t.Error(err)
@@ -365,25 +485,8 @@ func TestDynamoDBStorage_Lock(t *testing.T) {
 		LockTimeout:   caddy.Duration(lockTimeout),
 	}
 
-	// create lock
-	key := "test1"
-	err = storage.Lock(context.TODO(), key)
-	if err != nil {
-		t.Errorf("error creating lock: %s", err.Error())
-	}
-
-	// try to create lock again, it should take about 1-2 seconds to return
-	before := time.Now()
-	err = storage.Lock(context.TODO(), key)
-	if err != nil {
-		t.Errorf("error creating lock second time: %s", err.Error())
-	}
-	if time.Since(before) < lockTimeout {
-		t.Errorf("creating second lock finished quicker than it shoud, in %v seconds", time.Since(before).Seconds())
-	}
-
 	// try to unlock a key that doesn't exist
-	err = storage.Unlock(context.Background(), "doesntexist")
+	err = storage.Unlock(context.TODO(), "doesntexist")
 	if err != nil {
 		t.Errorf("got error unlocking non-existant key")
 	}
