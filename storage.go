@@ -315,7 +315,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 
 		// Lock acquired successfully
 		if err == nil {
-			lockCtx, cancel := context.WithCancel(context.Background())
+			lockCtx, cancel := context.WithCancel(ctx)
 			lockHandle := &LockHandle{
 				Key:        key,
 				LockID:     lockID,
