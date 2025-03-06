@@ -351,7 +351,7 @@ func TestDynamoDBStorage_Delete(t *testing.T) {
 	}
 }
 
-func TestDynamoDBStorage_LockConsistency(t *testing.T) {
+func TestDynamoDBStorageLockConsistency(t *testing.T) {
 	err := initDb()
 	if err != nil {
 		t.Error(err)
@@ -413,7 +413,7 @@ func TestDynamoDBStorage_LockConsistency(t *testing.T) {
 	}
 }
 
-func TestDynamoDBStorage_StaleLock(t *testing.T) {
+func TestDynamoDBStorageStaleLock(t *testing.T) {
 	err := initDb()
 	if err != nil {
 		t.Error(err)
@@ -468,7 +468,7 @@ func TestDynamoDBStorage_StaleLock(t *testing.T) {
 	}
 }
 
-func TestDynamoDBStorage_UnlockNonExistantKey(t *testing.T) {
+func TestDynamoDBStorageUnlockNonExistantKey(t *testing.T) {
 	err := initDb()
 	if err != nil {
 		t.Error(err)
