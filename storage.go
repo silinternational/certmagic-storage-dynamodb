@@ -270,6 +270,11 @@ func (s *Storage) Stat(ctx context.Context, key string) (certmagic.KeyInfo, erro
 	}, nil
 }
 
+// generateLockItemPrimaryKey generates the primary key for dynamodb lock item
+func generateLockItemPrimaryKey(key string) string {
+	return fmt.Sprintf("LOCK-%s", key)
+}
+
 // Lock acquires the lock for key, blocking until the lock
 // can be obtained or an error is returned. Note that, even
 // after acquiring a lock, an idempotent operation may have
@@ -292,7 +297,7 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 		return err
 	}
 
-	lockKey := fmt.Sprintf("LOCK-%s", key)
+	lockKey := generateLockItemPrimaryKey(key)
 	lockID := uuid.NewString()
 	expiresAt := time.Now().Add(time.Duration(s.LockTimeout)).Unix()
 
@@ -366,7 +371,7 @@ func (s *Storage) keepLockFresh(ctx context.Context, handle *LockHandle) {
 
 // updateLockExpiration updates the lock expiration atomically.
 func (s *Storage) updateLockExpiration(ctx context.Context, handle *LockHandle, timeout time.Duration) error {
-	lockKey := fmt.Sprintf("LOCK-%s", handle.Key)
+	lockKey := generateLockItemPrimaryKey(handle.Key)
 	newExpiresAt := time.Now().Add(time.Duration(s.LockTimeout)).Unix()
 
 	// Check LockID in ConditionExpression and update only the lock created by itself
@@ -421,7 +426,7 @@ func (s *Storage) Unlock(ctx context.Context, key string) error {
 		return err
 	}
 
-	lockKey := fmt.Sprintf("LOCK-%s", key)
+	lockKey := generateLockItemPrimaryKey(key)
 
 	handle, ok := s.locks.LoadAndDelete(key)
 	if !ok {
