@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.39.6
 	github.com/caddyserver/caddy/v2 v2.8.1
 	github.com/caddyserver/certmagic v0.21.2
+	github.com/google/uuid v1.6.0
 )
 
 require (
@@ -30,7 +31,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
 	github.com/google/pprof v0.0.0-20240528025155-186aa0362fba // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
 	github.com/libdns/libdns v0.2.2 // indirect

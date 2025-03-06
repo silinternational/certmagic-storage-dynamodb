@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -23,6 +26,8 @@ const (
 	contentsAttribute    = "Contents"
 	primaryKeyAttribute  = "PrimaryKey"
 	lastUpdatedAttribute = "LastUpdated"
+	lockIdAttribute      = "LockID"
+	expiresAtAttribute   = "ExpiresAt"
 	lockTimeoutMinutes   = caddy.Duration(5 * time.Minute)
 	lockPollingInterval  = caddy.Duration(5 * time.Second)
 )
@@ -62,6 +67,18 @@ type Storage struct {
 
 	// LockPollingInterval - [optional] how often to check for lock released. Default: 5 seconds
 	LockPollingInterval caddy.Duration `json:"lock_polling_interval,omitempty"`
+
+	// LockRefreshInterval - [optional] how often to refresh the lock. Default: LockTimeout / 3
+	LockRefreshInterval caddy.Duration `json:"lock_refresh_interval,omitempty"`
+
+	locks *sync.Map // map[string]*LockHandle
+}
+
+// LockHandle holds the information of a lock
+type LockHandle struct {
+	Key        string
+	LockID     string             // UUID to identify the lock
+	cancelFunc context.CancelFunc // Function to cancel periodic refresh
 }
 
 // initConfig initializes configuration for table name and AWS client
@@ -75,6 +92,9 @@ func (s *Storage) initConfig(ctx context.Context) error {
 	}
 	if s.LockPollingInterval == 0 {
 		s.LockPollingInterval = lockPollingInterval
+	}
+	if s.LockRefreshInterval == 0 {
+		s.LockRefreshInterval = s.LockTimeout / 3
 	}
 
 	// Initialize AWS Client if needed
@@ -92,6 +112,11 @@ func (s *Storage) initConfig(ctx context.Context) error {
 			o.EndpointOptions.DisableHTTPS = s.AwsDisableSSL
 		})
 	}
+
+	if s.locks == nil {
+		s.locks = &sync.Map{}
+	}
+
 	return nil
 }
 
@@ -245,6 +270,11 @@ func (s *Storage) Stat(ctx context.Context, key string) (certmagic.KeyInfo, erro
 	}, nil
 }
 
+// generateLockItemPrimaryKey generates the primary key for dynamodb lock item
+func generateLockItemPrimaryKey(key string) string {
+	return fmt.Sprintf("LOCK-%s", key)
+}
+
 // Lock acquires the lock for key, blocking until the lock
 // can be obtained or an error is returned. Note that, even
 // after acquiring a lock, an idempotent operation may have
@@ -267,43 +297,124 @@ func (s *Storage) Lock(ctx context.Context, key string) error {
 		return err
 	}
 
-	lockKey := fmt.Sprintf("LOCK-%s", key)
+	lockKey := generateLockItemPrimaryKey(key)
+	lockID := uuid.NewString()
+	expiresAt := time.Now().Add(time.Duration(s.LockTimeout)).Unix()
 
-	// Check for existing lock
 	for {
-		existing, err := s.getItem(ctx, lockKey)
-		isErrNotExists := errors.Is(err, fs.ErrNotExist)
-		if err != nil && !isErrNotExists {
-			return err
+		// Acquire lock if it doesn't exist or expired
+		input := &dynamodb.PutItemInput{
+			TableName: aws.String(s.Table),
+			Item: map[string]types.AttributeValue{
+				primaryKeyAttribute: &types.AttributeValueMemberS{Value: lockKey},
+				lockIdAttribute:     &types.AttributeValueMemberS{Value: lockID},
+				expiresAtAttribute:  &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", expiresAt)},
+			},
+			ConditionExpression: aws.String(fmt.Sprintf("attribute_not_exists(%s) OR %s < :now", primaryKeyAttribute, expiresAtAttribute)),
+			ExpressionAttributeValues: map[string]types.AttributeValue{
+				":now": &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", time.Now().Unix())},
+			},
 		}
 
-		// if lock doesn't exist or is empty, break to create a new one
-		if isErrNotExists || existing.Contents == "" {
-			break
-		}
+		_, err := s.Client.PutItem(ctx, input)
 
-		// Lock exists, check if expired or sleep 5 seconds and check again
-		expires, err := time.Parse(time.RFC3339, existing.Contents)
-		if err != nil {
-			return err
-		}
-		if time.Now().After(expires) {
-			if err := s.Unlock(ctx, key); err != nil {
-				return err
+		// Lock acquired successfully
+		if err == nil {
+			lockCtx, cancel := context.WithCancel(ctx)
+			lockHandle := &LockHandle{
+				Key:        key,
+				LockID:     lockID,
+				cancelFunc: cancel,
 			}
-			break
+			s.locks.Store(key, lockHandle)
+
+			// Start periodic refresh
+			go s.keepLockFresh(lockCtx, lockHandle)
+
+			return nil
 		}
 
+		// Lock not acquired, retry
 		select {
 		case <-time.After(time.Duration(s.LockPollingInterval)):
+			continue
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
+}
 
-	// lock doesn't exist, create it
-	contents := []byte(time.Now().Add(time.Duration(s.LockTimeout)).Format(time.RFC3339))
-	return s.Store(ctx, lockKey, contents)
+// keepLockFresh periodically updates the lock expiration
+// to prevent it from expiring while the critical section
+// is still running.
+func (s *Storage) keepLockFresh(ctx context.Context, handle *LockHandle) {
+	ticker := time.NewTicker(time.Duration(s.LockRefreshInterval))
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			timeout := time.Duration(s.LockRefreshInterval) / 2
+			err := s.updateLockExpiration(ctx, handle, timeout)
+			if err != nil {
+				// The critical section should be aborted if lock refresh fails.
+				// However, there is no way to notify the critical section to abort,
+				// so we just log the error and stop refreshing the lock.
+				log.Printf("failed to update lock expiration for key %s: %v", handle.Key, err)
+				return
+			}
+		case <-ctx.Done():
+			return // Unlock or external cancellation
+		}
+	}
+}
+
+// updateLockExpiration updates the lock expiration atomically.
+func (s *Storage) updateLockExpiration(ctx context.Context, handle *LockHandle, timeout time.Duration) error {
+	lockKey := generateLockItemPrimaryKey(handle.Key)
+	newExpiresAt := time.Now().Add(time.Duration(s.LockTimeout)).Unix()
+
+	// Check LockID in ConditionExpression and update only the lock created by itself
+	input := &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.Table),
+		Key: map[string]types.AttributeValue{
+			primaryKeyAttribute: &types.AttributeValueMemberS{Value: lockKey},
+		},
+		UpdateExpression:    aws.String(fmt.Sprintf("SET %s = :newExpiresAt", expiresAtAttribute)),
+		ConditionExpression: aws.String(fmt.Sprintf("%s = :lockID", lockIdAttribute)),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":newExpiresAt": &types.AttributeValueMemberN{Value: fmt.Sprintf("%d", newExpiresAt)},
+			":lockID":       &types.AttributeValueMemberS{Value: handle.LockID},
+		},
+	}
+
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	for {
+		_, err := s.Client.UpdateItem(ctx, input)
+		if err == nil {
+			return nil
+		}
+
+		// Do not retry if lock deleted or acquired by another process
+		var ccfe *types.ConditionalCheckFailedException
+		if errors.As(err, &ccfe) {
+			return fmt.Errorf("failed to update lock expiration: lock may have been deleted or updated by another process")
+		}
+
+		// Retry in case of network error or other transient issues
+		delay := min(timeout/10, time.Second) // delay should be smaller enough than timeout
+		delayTimer := time.NewTimer(delay)
+		defer delayTimer.Stop()
+		select {
+		case <-delayTimer.C:
+			continue
+		case <-timeoutTimer.C:
+			return fmt.Errorf("failed to update lock expiration: timeout")
+		case <-ctx.Done():
+			return nil
+		}
+	}
 }
 
 // Unlock releases the lock for key. This method must ONLY be
@@ -315,9 +426,44 @@ func (s *Storage) Unlock(ctx context.Context, key string) error {
 		return err
 	}
 
-	lockKey := fmt.Sprintf("LOCK-%s", key)
+	lockKey := generateLockItemPrimaryKey(key)
 
-	return s.Delete(ctx, lockKey)
+	handle, ok := s.locks.LoadAndDelete(key)
+	if !ok {
+		// this line is not reached in normal operation, but it's here for safety
+		return nil
+	}
+	lockHandle, _ := handle.(*LockHandle)
+
+	// Stop periodic refresh of lock expiration
+	lockHandle.cancelFunc()
+
+	// Delete lock only if it was created by itself
+	input := &dynamodb.DeleteItemInput{
+		TableName: aws.String(s.Table),
+		Key: map[string]types.AttributeValue{
+			primaryKeyAttribute: &types.AttributeValueMemberS{Value: lockKey},
+		},
+		ConditionExpression: aws.String(fmt.Sprintf("%s = :lockID", lockIdAttribute)),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":lockID": &types.AttributeValueMemberS{Value: lockHandle.LockID},
+		},
+	}
+
+	_, err := s.Client.DeleteItem(ctx, input)
+
+	if err != nil {
+		var ccfe *types.ConditionalCheckFailedException
+		if errors.As(err, &ccfe) {
+			// Lock already deleted or updated by another process, so this process is not the owner anymore.
+			// This should not be considered an error according to the `Unlock` interface definition.
+			// ref. https://github.com/caddyserver/certmagic/blob/2134b61d5db3cf61d9255725219ab6591541c19f/storage.go#L147-L148
+			return nil
+		}
+		return err
+	}
+
+	return nil
 }
 
 func (s *Storage) getItem(ctx context.Context, key string) (Item, error) {
